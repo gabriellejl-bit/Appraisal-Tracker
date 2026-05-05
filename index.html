@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Appraisal Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F7F5F0;
+    --surface: #FFFFFF;
+    --surface-alt: #FAFAF8;
+    --border: #E2DFD8;
+    --border-light: #F0EDE8;
+    --text: #2C2926;
+    --text-sec: #6B6560;
+    --text-muted: #A09A93;
+    --primary: #1A5F4A;
+    --primary-hover: #154D3C;
+    --primary-light: #E8F2EE;
+    --accent-a: #7B5EA7;
+    --accent-a-bg: #F0EBF5;
+    --accent-b: #C47A2D;
+    --accent-b-bg: #FDF3E8;
+    --error: #C44A4A;
+    --error-bg: #FDF0F0;
+    --radius: 8px;
+    --radius-lg: 12px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Source Serif 4', Georgia, serif;
+    background: var(--bg); color: var(--text); min-height: 100vh;
+  }
+  input, select, button, textarea { font-family: 'DM Sans', sans-serif; }
+
+  .header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 0 24px; position: sticky; top: 0; z-index: 50;
+  }
+  .header-inner {
+    max-width: 1100px; margin: 0 auto;
+    display: flex; align-items: center; justify-content: space-between; padding: 16px 0;
+  }
+  .logo { font-size: 22px; font-weight: 700; color: var(--primary); letter-spacing: -0.02em; }
+  .subtitle { font-family: 'DM Sans', sans-serif; font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+  .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  .btn {
+    font-size: 14px; font-weight: 600; padding: 9px 18px; border-radius: var(--radius);
+    border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+    transition: opacity 0.15s, background 0.15s; white-space: nowrap;
+  }
+  .btn:hover { opacity: 0.88; }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); font-weight: 500; }
+  .btn-small { font-size: 13px; padding: 7px 14px; border-radius: 6px; font-weight: 500; background: var(--surface); border: 1px solid var(--border); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+  .btn svg { flex-shrink: 0; }
+
+  .main { max-width: 1100px; margin: 0 auto; padding: 24px 24px 80px; }
+
+  .status-bar {
+    font-family: 'DM Sans', sans-serif; font-size: 12px; color: var(--text-muted);
+    display: flex; align-items: center; gap: 16px; margin-bottom: 16px; padding: 8px 0; flex-wrap: wrap;
+  }
+  .status-item { display: flex; align-items: center; gap: 5px; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .status-dot.green { background: #4CAF50; }
+
+  .search-bar { position: relative; margin-bottom: 20px; }
+  .search-bar .s-icon {
+    position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+    color: var(--text-muted); pointer-events: none; display: flex;
+  }
+  .search-input {
+    width: 100%; padding: 11px 40px 11px 42px; font-size: 14px;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface); color: var(--text); outline: none;
+  }
+  .search-input:focus { border-color: var(--primary); }
+  .clear-btn {
+    position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; cursor: pointer; color: var(--text-muted); padding: 4px; display: flex;
+  }
+
+  .table-wrap {
+    background: var(--surface); border-radius: var(--radius-lg);
+    border: 1px solid var(--border); overflow: auto;
+  }
+  table { width: 100%; border-collapse: collapse; font-family: 'DM Sans', sans-serif; font-size: 13.5px; }
+  th {
+    text-align: left; padding: 11px 14px; font-weight: 600; font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted);
+    border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  th.center { text-align: center; }
+  td { padding: 11px 14px; white-space: nowrap; }
+  td.mono { font-family: 'DM Mono', monospace; font-size: 13px; letter-spacing: 0.02em; }
+  tbody tr { border-bottom: 1px solid var(--border-light); transition: background 0.1s; }
+  tbody tr:hover { background: var(--surface-alt); }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+  .badge-a { background: var(--accent-a-bg); color: var(--accent-a); }
+  .badge-b { background: var(--accent-b-bg); color: var(--accent-b); }
+  .edit-btn {
+    background: none; border: none; cursor: pointer; color: var(--text-muted);
+    padding: 4px; border-radius: 4px; display: flex;
+  }
+  .edit-btn:hover { color: var(--primary); }
+
+  .empty { text-align: center; padding: 60px 20px; }
+  .empty p { font-family: 'DM Sans', sans-serif; }
+  .empty .empty-main { font-size: 16px; color: var(--text-sec); margin: 16px 0 4px; }
+  .empty .empty-hint { font-size: 13px; color: var(--text-muted); }
+
+  .form-card {
+    background: var(--surface); border-radius: 14px; border: 1px solid var(--border);
+    padding: 32px 28px; max-width: 640px; margin: 0 auto;
+  }
+  .form-title { font-size: 20px; font-weight: 700; margin-bottom: 24px; color: var(--primary); }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 20px; }
+  .field-full { grid-column: 1 / -1; }
+  label.field-label {
+    font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-sec);
+    display: block; margin-bottom: 6px;
+  }
+  .input, .select-input {
+    width: 100%; padding: 10px 14px; font-size: 14px;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface-alt); color: var(--text); outline: none;
+    font-family: 'DM Sans', sans-serif;
+  }
+  .input:focus, .select-input:focus { border-color: var(--primary); }
+  .input.error, .select-input.error { border-color: var(--error); background: var(--error-bg); }
+  .input.mono { font-family: 'DM Mono', monospace; }
+  .error-text { font-size: 12px; color: var(--error); margin-top: 4px; font-family: 'DM Sans', sans-serif; display: none; }
+  .date-row { display: flex; gap: 12px; align-items: center; }
+  .date-preview {
+    font-family: 'DM Sans', sans-serif; font-size: 13px; color: var(--text-sec);
+    background: var(--border-light); padding: 6px 12px; border-radius: 6px; white-space: nowrap;
+  }
+  .item-row { display: flex; gap: 10px; align-items: center; }
+
+  .split-card {
+    background: var(--surface-alt); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 20px;
+  }
+  .split-row { display: flex; align-items: center; justify-content: center; gap: 20px; }
+  .split-person { text-align: center; flex: 1; }
+  .split-name { font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 600; color: var(--text-sec); display: block; margin-bottom: 8px; }
+  .split-input-wrap {
+    display: inline-flex; align-items: center;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding-right: 10px;
+  }
+  .split-input {
+    width: 60px; padding: 9px 6px 9px 12px; font-size: 18px; font-weight: 600;
+    border: none; background: transparent; color: var(--text);
+    text-align: center; outline: none; font-family: 'DM Sans', sans-serif;
+  }
+  .split-input::-webkit-inner-spin-button, .split-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  .split-input { -moz-appearance: textfield; }
+  .split-pct { font-size: 14px; color: var(--text-muted); font-family: 'DM Sans', sans-serif; }
+  .split-divider { display: flex; align-items: center; color: var(--text-muted); }
+  .split-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; margin-top: 14px; background: var(--border); }
+  .split-bar-paula { background: var(--accent-a); transition: width 0.2s; border-radius: 3px 0 0 3px; }
+  .split-bar-gabrielle { background: var(--primary); transition: width 0.2s; border-radius: 0 3px 3px 0; }
+  .form-actions {
+    display: flex; justify-content: flex-end; gap: 10px;
+    margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border);
+  }
+
+  .toast {
+    position: fixed; top: 20px; right: 20px; z-index: 999;
+    background: var(--primary); color: #fff;
+    padding: 10px 20px; border-radius: var(--radius);
+    font-family: 'DM Sans', sans-serif; font-size: 14px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    animation: slideIn 0.3s ease;
+  }
+  .toast.warn { background: var(--accent-b); }
+
+  .loading-screen {
+    display: flex; align-items: center; justify-content: center;
+    height: 100vh; flex-direction: column; gap: 12px;
+  }
+  .spinner {
+    width: 32px; height: 32px; border: 3px solid var(--border);
+    border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  .loading-text { font-family: 'DM Sans', sans-serif; font-size: 13px; color: var(--text-muted); }
+
+  @keyframes slideIn { from { opacity:0; transform:translateX(20px); } to { opacity:1; transform:translateX(0); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 640px) {
+    .form-grid { grid-template-columns: 1fr; }
+    .field-full { grid-column: 1; }
+    .header-inner { flex-direction: column; gap: 12px; align-items: flex-start; }
+    th, td { padding: 8px 10px; font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="loading-screen"><div class="spinner"></div><div class="loading-text">Opening database…</div></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// DATABASE LAYER — IndexedDB
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DB_NAME = 'AppraisalTrackerDB';
+const DB_VERSION = 1;
+const STORE_RECORDS = 'appraisals';
+const STORE_ITEMS = 'items';
+
+let db = null;
+
+function openDatabase() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains(STORE_RECORDS)) {
+        const s = d.createObjectStore(STORE_RECORDS, { keyPath: 'id' });
+        s.createIndex('customerRef', 'customerRef', { unique: false });
+        s.createIndex('surname', 'surname', { unique: false });
+        s.createIndex('retailer', 'retailer', { unique: false });
+        s.createIndex('item', 'item', { unique: false });
+        s.createIndex('date', 'date', { unique: false });
+      }
+      if (!d.objectStoreNames.contains(STORE_ITEMS)) {
+        d.createObjectStore(STORE_ITEMS, { keyPath: 'name' });
+      }
+    };
+    req.onsuccess = (e) => { db = e.target.result; resolve(db); };
+    req.onerror = (e) => reject(e.target.error);
+  });
+}
+
+function dbGetAll(store) {
+  return new Promise((res, rej) => {
+    const r = db.transaction(store, 'readonly').objectStore(store).getAll();
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+}
+function dbPut(store, rec) {
+  return new Promise((res, rej) => {
+    const r = db.transaction(store, 'readwrite').objectStore(store).put(rec);
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+}
+function dbGet(store, key) {
+  return new Promise((res, rej) => {
+    const r = db.transaction(store, 'readonly').objectStore(store).get(key);
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// APP STATE & LOGIC
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DEFAULT_RETAILERS = ['Alexandra', 'Queenstown'];
+const DEFAULT_ITEMS = ['Ring', 'Necklace', 'Bracelet', 'Watch', 'Earrings', 'Brooch', 'Pendant'];
+
+let state = { records: [], items: [], view: 'list', editId: null, search: '', toast: null, toastTimer: null, dbReady: false };
+
+function formatDateBritish(d) {
+  const m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return String(d.getDate()).padStart(2,'0') + ' ' + m[d.getMonth()] + ' ' + d.getFullYear();
+}
+function todayISO() { return new Date().toISOString().split('T')[0]; }
+function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+function titleCase(s) { return s.split(/(\s|-)/).map(w => /[a-zA-Z]/.test(w) ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w).join(''); }
+function esc(v) { return '"' + String(v??'').replace(/"/g,'""') + '"'; }
+
+function toCSV(recs) {
+  const hdr = ['ID','Date','Customer Ref','Surname','First Name','Retailer','Item','Paula %','Gabrielle %','Created','Modified'];
+  return [hdr.join(','), ...recs.map(r => [r.id,r.date,r.customerRef,r.surname,r.firstName,r.retailer,r.item,r.paulaPct,r.gabriellePct,r.created,r.modified].map(esc).join(','))].join('\n');
+}
+
+function showToast(msg, warn) {
+  state.toast = { msg, warn };
+  if (state.toastTimer) clearTimeout(state.toastTimer);
+  state.toastTimer = setTimeout(() => { state.toast = null; render(); }, 3000);
+  render();
+}
+
+async function loadAll() {
+  state.records = await dbGetAll(STORE_RECORDS);
+  const saved = await dbGetAll(STORE_ITEMS);
+  state.items = saved.map(i => i.name).sort();
+  if (!state.items.length) {
+    for (const n of DEFAULT_ITEMS) await dbPut(STORE_ITEMS, { name: n });
+    state.items = [...DEFAULT_ITEMS].sort();
+  }
+}
+
+async function addRecord(data) {
+  const now = formatDateBritish(new Date());
+  await dbPut(STORE_RECORDS, { ...data, id: genId(), created: now, modified: now });
+  if (data.item && !state.items.includes(data.item)) {
+    await dbPut(STORE_ITEMS, { name: data.item });
+    state.items = [...state.items, data.item].sort();
+  }
+  await loadAll(); state.view = 'list'; showToast('Appraisal saved');
+}
+
+async function updateRecord(id, data) {
+  const ex = await dbGet(STORE_RECORDS, id);
+  if (!ex) return;
+  const now = formatDateBritish(new Date());
+  await dbPut(STORE_RECORDS, { ...ex, ...data, modified: now });
+  if (data.item && !state.items.includes(data.item)) {
+    await dbPut(STORE_ITEMS, { name: data.item });
+    state.items = [...state.items, data.item].sort();
+  }
+  await loadAll(); state.view = 'list'; state.editId = null; showToast('Appraisal updated');
+}
+
+async function downloadCSV() {
+  const all = await dbGetAll(STORE_RECORDS);
+  const blob = new Blob([toCSV(all)], { type: 'text/csv' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'appraisals_' + new Date().toISOString().slice(0,10) + '.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  showToast('CSV downloaded');
+}
+
+async function exportBackup() {
+  const recs = await dbGetAll(STORE_RECORDS);
+  const items = await dbGetAll(STORE_ITEMS);
+  const blob = new Blob([JSON.stringify({ version: 1, exported: new Date().toISOString(), records: recs, items }, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'appraisals_backup_' + new Date().toISOString().slice(0,10) + '.json';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  showToast('Backup downloaded');
+}
+
+async function importBackup(file) {
+  try {
+    const backup = JSON.parse(await file.text());
+    if (!backup.records || !Array.isArray(backup.records)) throw new Error('Invalid backup');
+    let count = 0;
+    for (const rec of backup.records) {
+      const ex = await dbGet(STORE_RECORDS, rec.id);
+      if (!ex) { await dbPut(STORE_RECORDS, rec); count++; }
+    }
+    if (backup.items) for (const it of backup.items) await dbPut(STORE_ITEMS, it);
+    await loadAll();
+    showToast('Imported ' + count + ' new record' + (count !== 1 ? 's' : ''));
+  } catch (e) { showToast('Import failed: ' + e.message, true); }
+}
+
+function getFiltered() {
+  if (!state.search) return state.records;
+  const s = state.search.toLowerCase();
+  return state.records.filter(r => [r.surname,r.firstName,r.customerRef,r.retailer,r.item,r.date].some(v => (v||'').toLowerCase().includes(s)));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RENDERING
+// ═══════════════════════════════════════════════════════════════════════════
+
+function h(tag, a, ...ch) {
+  const el = document.createElement(tag);
+  if (a) for (const [k,v] of Object.entries(a)) {
+    if (k==='style'&&typeof v==='object') Object.assign(el.style,v);
+    else if (k.startsWith('on')&&typeof v==='function') el.addEventListener(k.slice(2).toLowerCase(),v);
+    else if (k==='className') el.className=v;
+    else if (k==='htmlContent') el.innerHTML=v;
+    else el.setAttribute(k,v);
+  }
+  for (const c of ch.flat()) { if (c==null||c===false) continue; el.appendChild(typeof c==='string'?document.createTextNode(c):c); }
+  return el;
+}
+
+const SVG = {
+  plus: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  download: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+  back: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>',
+  search: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+  close: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+  edit: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+  empty: '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#A09A93" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>',
+  dash: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A09A93" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  backup: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>',
+  upload: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
+  db: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
+};
+function icon(n) { return h('span',{htmlContent:SVG[n],style:{display:'inline-flex',alignItems:'center'}}); }
+
+// ── Header ───────────────────────────────────────────────────────────────
+function renderHeader() {
+  const left = h('div',{},
+    h('h1',{className:'logo'},'Appraisal Tracker'),
+    h('p',{className:'subtitle'}, state.records.length+' record'+(state.records.length!==1?'s':'')+' in database'),
+  );
+  const actions = h('div',{className:'header-actions'});
+
+  if (state.view === 'list') {
+    const fi = h('input',{type:'file',accept:'.json',style:{display:'none'}});
+    fi.addEventListener('change', (e) => { if (e.target.files[0]) importBackup(e.target.files[0]); });
+    actions.append(
+      fi,
+      h('button',{className:'btn btn-secondary',onClick:()=>fi.click()}, icon('upload'),'Import'),
+      h('button',{className:'btn btn-secondary',onClick:exportBackup,disabled:!state.records.length}, icon('backup'),'Backup'),
+      h('button',{className:'btn btn-secondary',onClick:downloadCSV,disabled:!state.records.length}, icon('download'),'CSV'),
+      h('button',{className:'btn btn-primary',onClick:()=>{state.view='form';render();}}, icon('plus'),'New'),
+    );
+  } else {
+    actions.append(h('button',{className:'btn btn-secondary',onClick:()=>{state.view='list';state.editId=null;render();}}, icon('back'),'Back'));
+  }
+  return h('header',{className:'header'}, h('div',{className:'header-inner'}, left, actions));
+}
+
+// ── List ─────────────────────────────────────────────────────────────────
+function renderList() {
+  const c = h('div',{});
+
+  c.append(h('div',{className:'status-bar'},
+    h('span',{className:'status-item'}, h('span',{className:'status-dot green'}),' IndexedDB connected'),
+    h('span',{className:'status-item'}, icon('db'),' '+state.records.length+' records stored'),
+  ));
+
+  const sw = h('div',{className:'search-bar'}, h('span',{className:'s-icon',htmlContent:SVG.search}));
+  const si = h('input',{className:'search-input',placeholder:'Search by name, reference, retailer, item…',value:state.search,
+    onInput:(e)=>{state.search=e.target.value;render();}});
+  sw.append(si);
+  if (state.search) sw.append(h('button',{className:'clear-btn',onClick:()=>{state.search='';render();},htmlContent:SVG.close}));
+  c.append(sw);
+
+  const fil = getFiltered();
+  if (!fil.length) {
+    const em = h('div',{className:'empty'}); em.innerHTML = SVG.empty;
+    em.append(
+      h('p',{className:'empty-main'}, state.search?'No matches found':'No appraisals yet'),
+      h('p',{className:'empty-hint'}, state.search?'Try a different search term':'Click New to add your first appraisal'),
+    );
+    c.append(em); return c;
+  }
+
+  const tbl = h('table',{});
+  tbl.append(h('thead',{}, h('tr',{},
+    h('th',{},'Date'),h('th',{},'Ref'),h('th',{},'Name'),h('th',{},'Retailer'),h('th',{},'Item'),
+    h('th',{className:'center'},'Paula'),h('th',{className:'center'},'Gabrielle'),h('th',{style:{width:'48px'}}),
+  )));
+  const tb = h('tbody',{});
+  for (const r of [...fil].reverse()) {
+    const eb = h('button',{className:'edit-btn',title:'Edit',onClick:()=>{state.editId=r.id;state.view='edit';render();}});
+    eb.innerHTML = SVG.edit;
+    tb.append(h('tr',{},
+      h('td',{},r.date), h('td',{className:'mono'},r.customerRef),
+      h('td',{},r.surname+', '+r.firstName),
+      h('td',{},h('span',{className:r.retailer==='Alexandra'?'badge badge-a':'badge badge-b'},r.retailer)),
+      h('td',{},r.item),
+      h('td',{style:{textAlign:'center'}},r.paulaPct+'%'),
+      h('td',{style:{textAlign:'center'}},r.gabriellePct+'%'),
+      h('td',{},eb),
+    ));
+  }
+  tbl.append(tb);
+  c.append(h('div',{className:'table-wrap'},tbl));
+  return c;
+}
+
+// ── Form ─────────────────────────────────────────────────────────────────
+function renderForm(rec) {
+  const isEdit = !!rec;
+  const f = {
+    dateISO: rec?'':todayISO(), date: rec?rec.date:formatDateBritish(new Date()),
+    customerRef: rec?rec.customerRef:'', surname: rec?rec.surname:'', firstName: rec?rec.firstName:'',
+    retailer: rec?rec.retailer:DEFAULT_RETAILERS[0], item: rec?rec.item:(state.items[0]||''),
+    customItem:'', useCustomItem:false,
+    paulaPct: rec?rec.paulaPct:50, gabriellePct: rec?rec.gabriellePct:50,
+  };
+
+  const card = h('div',{className:'form-card'}, h('h2',{className:'form-title'}, isEdit?'Edit Appraisal':'New Appraisal'));
+  const grid = h('div',{className:'form-grid'});
+
+  // Date
+  const df = h('div',{className:'field-full'}, h('label',{className:'field-label'},'Date'));
+  const di = h('input',{type:'date',className:'input',value:f.dateISO});
+  const dp = h('span',{className:'date-preview'},f.date);
+  di.addEventListener('input',(e)=>{f.dateISO=e.target.value;if(e.target.value){const[y,m,d]=e.target.value.split('-');f.date=formatDateBritish(new Date(+y,+m-1,+d));dp.textContent=f.date;}});
+  df.append(h('div',{className:'date-row'},di,dp));
+  grid.append(df);
+
+  // Ref
+  const rf = h('div',{}, h('label',{className:'field-label'},'Customer Reference'));
+  const ri = h('input',{className:'input mono',placeholder:'000-000000',value:f.customerRef});
+  const re = h('span',{className:'error-text'},'Format: 999-999999');
+  ri.addEventListener('input',(e)=>{let d=e.target.value.replace(/\D/g,'').slice(0,9);f.customerRef=d.length>3?d.slice(0,3)+'-'+d.slice(3):d;ri.value=f.customerRef;ri.classList.remove('error');re.style.display='none';});
+  rf.append(ri,re); grid.append(rf);
+
+  // Surname
+  const sf = h('div',{}, h('label',{className:'field-label'},'Surname'));
+  const si = h('input',{className:'input',placeholder:'Smith',value:f.surname});
+  si.addEventListener('input',(e)=>{f.surname=titleCase(e.target.value);si.value=f.surname;si.classList.remove('error');});
+  sf.append(si); grid.append(sf);
+
+  // First name
+  const ff = h('div',{}, h('label',{className:'field-label'},'First Name'));
+  const fi = h('input',{className:'input',placeholder:'Jane',value:f.firstName});
+  fi.addEventListener('input',(e)=>{f.firstName=titleCase(e.target.value);fi.value=f.firstName;fi.classList.remove('error');});
+  ff.append(fi); grid.append(ff);
+
+  // Retailer
+  const rtf = h('div',{}, h('label',{className:'field-label'},'Retailer'));
+  const rts = h('select',{className:'select-input'});
+  DEFAULT_RETAILERS.forEach(r=>{const o=h('option',{value:r},r);if(r===f.retailer)o.selected=true;rts.append(o);});
+  rts.addEventListener('change',(e)=>{f.retailer=e.target.value;});
+  rtf.append(rts); grid.append(rtf);
+
+  // Item
+  const itf = h('div',{className:'field-full'}, h('label',{className:'field-label'},'Item'));
+  const itr = h('div',{className:'item-row'});
+  const its = h('select',{className:'select-input',style:{flex:'1'}});
+  state.items.forEach(i=>{const o=h('option',{value:i},i);if(i===f.item)o.selected=true;its.append(o);});
+  its.addEventListener('change',(e)=>{f.item=e.target.value;});
+  const ci = h('input',{className:'input',placeholder:'Enter new item type…',style:{flex:'1',display:'none'}});
+  ci.addEventListener('input',(e)=>{f.customItem=e.target.value;});
+  const nib = h('button',{className:'btn btn-small',onClick:()=>{f.useCustomItem=true;its.style.display='none';ci.style.display='';nib.style.display='none';cib.style.display='';ci.focus();}});
+  nib.innerHTML = SVG.plus+' New Item';
+  const cib = h('button',{className:'btn btn-small',style:{display:'none'},onClick:()=>{f.useCustomItem=false;f.customItem='';ci.value='';its.style.display='';ci.style.display='none';nib.style.display='';cib.style.display='none';}},'Cancel');
+  itr.append(its,ci,nib,cib); itf.append(itr); grid.append(itf);
+
+  // Split
+  const spf = h('div',{className:'field-full'}, h('label',{className:'field-label'},'Time Split'));
+  const spc = h('div',{className:'split-card'});
+  const pI = h('input',{type:'number',className:'split-input',min:'0',max:'100',value:f.paulaPct});
+  const gI = h('input',{type:'number',className:'split-input',min:'0',max:'100',value:f.gabriellePct});
+  const bP = h('div',{className:'split-bar-paula',style:{width:f.paulaPct+'%'}});
+  const bG = h('div',{className:'split-bar-gabrielle',style:{width:f.gabriellePct+'%'}});
+  pI.addEventListener('input',(e)=>{let n=Math.min(100,Math.max(0,parseInt(e.target.value)||0));f.paulaPct=n;f.gabriellePct=100-n;gI.value=f.gabriellePct;bP.style.width=n+'%';bG.style.width=(100-n)+'%';});
+  gI.addEventListener('input',(e)=>{let n=Math.min(100,Math.max(0,parseInt(e.target.value)||0));f.gabriellePct=n;f.paulaPct=100-n;pI.value=f.paulaPct;bP.style.width=(100-n)+'%';bG.style.width=n+'%';});
+  spc.append(
+    h('div',{className:'split-row'},
+      h('div',{className:'split-person'}, h('span',{className:'split-name'},'Paula'), h('div',{className:'split-input-wrap'},pI,h('span',{className:'split-pct'},'%'))),
+      h('div',{className:'split-divider',htmlContent:SVG.dash}),
+      h('div',{className:'split-person'}, h('span',{className:'split-name'},'Gabrielle'), h('div',{className:'split-input-wrap'},gI,h('span',{className:'split-pct'},'%'))),
+    ),
+    h('div',{className:'split-bar'},bP,bG),
+  );
+  spf.append(spc); grid.append(spf);
+  card.append(grid);
+
+  // Actions
+  card.append(h('div',{className:'form-actions'},
+    h('button',{className:'btn btn-secondary',onClick:()=>{state.view='list';state.editId=null;render();}},'Cancel'),
+    h('button',{className:'btn btn-primary',onClick:async()=>{
+      let ok=true;
+      if(!f.customerRef||!/^\d{3}-\d{1,6}$/.test(f.customerRef)){ok=false;ri.classList.add('error');re.style.display='block';}
+      if(!f.surname.trim()){ok=false;si.classList.add('error');}
+      if(!f.firstName.trim()){ok=false;fi.classList.add('error');}
+      const finalItem=f.useCustomItem?f.customItem.trim():f.item;
+      if(!finalItem) ok=false;
+      if(!ok){showToast('Please fill in all required fields',true);return;}
+      const data={date:f.date,customerRef:f.customerRef,surname:f.surname.trim(),firstName:f.firstName.trim(),retailer:f.retailer,item:finalItem,paulaPct:f.paulaPct,gabriellePct:f.gabriellePct};
+      if(isEdit) await updateRecord(state.editId,data); else await addRecord(data);
+    }}, (isEdit?'Update':'Save')+' Appraisal'),
+  ));
+  return card;
+}
+
+// ── Main render ──────────────────────────────────────────────────────────
+function render() {
+  const app = document.getElementById('app');
+  app.innerHTML = '';
+  if (!state.dbReady) { app.innerHTML='<div class="loading-screen"><div class="spinner"></div><div class="loading-text">Opening database…</div></div>'; return; }
+  if (state.toast) app.append(h('div',{className:'toast'+(state.toast.warn?' warn':'')},state.toast.msg));
+  app.append(renderHeader());
+  const main = h('div',{className:'main'});
+  if (state.view==='list') main.append(renderList());
+  else if (state.view==='form') main.append(renderForm(null));
+  else if (state.view==='edit'&&state.editId) {
+    const r=state.records.find(x=>x.id===state.editId);
+    if(r) main.append(renderForm(r)); else { state.view='list'; main.append(renderList()); }
+  }
+  app.append(main);
+  if (state.view==='list'&&state.search) { const s=app.querySelector('.search-input'); if(s){s.focus();s.setSelectionRange(state.search.length,state.search.length);} }
+}
+
+// ── Boot ─────────────────────────────────────────────────────────────────
+(async()=>{
+  try { await openDatabase(); await loadAll(); state.dbReady=true; render(); }
+  catch(e) { document.getElementById('app').innerHTML='<div class="loading-screen"><div class="loading-text" style="color:#C44A4A;">Database error: '+e.message+'</div></div>'; }
+})();
+</script>
+</body>
+</html>
