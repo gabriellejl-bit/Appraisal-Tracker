@@ -1,46 +1,57 @@
 # Billing Tracker — Project Context
 
 ## Purpose
-A billing tracker for jewellery appraisal work. Paula and Gabby perform appraisals for jewellery retailers and track their work for invoicing. Each job is identified by the retailer's POS reference number. **Retailer is the primary billing entity** — Paula and Gabby invoice each retailer separately based on their work split.
+A billing tracker for jewellery appraisal work. Paula and Gabby perform valuations for jewellery retailers and track their work for invoicing. Each job is identified by the retailer's POS reference number. **Retailer is the primary billing entity** — Paula and Gabby invoice each retailer separately based on their work split percentage per job.
 
 ## URLs
-- **Live app:** https://gabriellejl-bit.github.io/Appraisal-Tracker/
-- **Repository:** https://github.com/gabriellejl-bit/Appraisal-Tracker
+- **Live:** https://gabriellejl-bit.github.io/Appraisal-Tracker/
+- **Repo:** https://github.com/gabriellejl-bit/Appraisal-Tracker
 
-## Architecture
+## Stack
 - **Frontend:** Single HTML file (`index.html`) — vanilla JS, no framework
-- **Database:** Supabase (PostgreSQL) via REST API (no SDK, raw fetch)
+- **Database:** Supabase (PostgreSQL) via REST API — no SDK, raw fetch
 - **Hosting:** GitHub Pages
-- **Auth:** None yet — user toggle in nav bar (Paula/Gabby)
-
-## Supabase Config
-- **Project URL:** `https://ytmyfarsptkezxkgpcbo.supabase.co`
-- **API Key:** `sb_publishable_2POAMJdA5U1FPSgxzDy1oA_EfCnF6I2`
-- Row Level Security enabled with open policies (no auth yet)
+- **Auth:** None yet — user toggle in nav (Paula / Gabby)
+- **Supabase URL:** `https://ytmyfarsptkezxkgpcbo.supabase.co`
+- **Supabase Key:** `sb_publishable_2POAMJdA5U1FPSgxzDy1oA_EfCnF6I2`
+- RLS enabled with open policies (no auth yet)
 
 ---
 
 ## Database Schema
 
-### `retailers` (lookup — maintained in Supabase)
+All lookup tables are maintained directly in Supabase — no in-app editing.
+
+### `billing_statuses` (lookup)
 | Column | Type | Notes |
 |---|---|---|
 | id | SERIAL PK | |
-| name | TEXT | e.g. "Alexandra" |
-| code | INTEGER | e.g. 1 displays as "001" |
+| name | TEXT | "New", "Hold from Billing", "Billed", "Archived" |
+| show_in_dashboard | BOOLEAN | Archived = false |
+| show_in_reports | BOOLEAN | Archived = false |
+
+**Always use `name` in the UI. IDs are system-only.**
+Statuses: New (1), Hold from Billing (2), Billed (3), Archived (4)
+
+### `retailers` (lookup)
+| Column | Type | Notes |
+|---|---|---|
+| id | SERIAL PK | |
+| name | TEXT | "Alexandra", "Queenstown" |
+| code | INTEGER | e.g. 1 → displays as "001" |
 
 Seed: Alexandra (1), Queenstown (2)
 
-### `items` (lookup — maintained in Supabase)
+### `items` (lookup)
 | Column | Type | Notes |
 |---|---|---|
 | name | TEXT PK | e.g. "Ring", "Watch" |
 
-⚠️ PK is `name`, not `id`. Never query with `order=id.asc`.
+⚠️ PK is `name` — no `id` column. Never sort with `order=id.asc`.
 
 Seed: Ring, Necklace, Bracelet, Watch, Earrings, Brooch, Pendant
 
-### `job_types` (lookup — maintained in Supabase)
+### `job_types` (lookup)
 | Column | Type | Notes |
 |---|---|---|
 | id | SERIAL PK | |
@@ -57,7 +68,7 @@ Seed: Standard - Stoneset ($60), Standard - Unset ($60), Watch/Charm Bracelet ($
 | retailer_id | INTEGER FK | → retailers |
 | customer_ref | TEXT | Full ref e.g. "001-12345" |
 | surname | TEXT | Only customer identifier stored |
-| status | TEXT | new / pending / unbilled / billed |
+| status_id | INTEGER FK | → billing_statuses |
 | created | TEXT | DD MMM YYYY |
 | modified | TEXT | DD MMM YYYY |
 
@@ -72,138 +83,142 @@ Seed: Standard - Stoneset ($60), Standard - Unset ($60), Watch/Charm Bracelet ($
 | paula_pct | INTEGER | 0–100 |
 | gabrielle_pct | INTEGER | 0–100 (paula + gabrielle = 100) |
 
-### `appraisals` (legacy — no longer written to)
+### `appraisals` — legacy, not written to
 
 ---
 
-## Customer Reference Format
-- Stored as full string: `001-12345` (retailer code padded to 3 digits + dash + 4–5 digit suffix)
-- Retailer dropdown auto-fills the prefix; user types only the suffix
-- Tab from retailer field jumps cursor to the suffix input
-- `dateToISO()` converts stored DD MMM YYYY back to YYYY-MM-DD for the date picker
+## Key Concepts
 
----
+**Customer reference:** Stored as full string `001-12345`. Retailer dropdown auto-fills the 3-digit prefix from `retailers.code`; user types only the 4–5 digit suffix. Tab from retailer jumps to the suffix input.
 
-## Users
-- **Gabby** (Gabrielle) — default, sage green `#5C7A6B`
-- **Paula** — plum `#6E4B5E`
+**Cost split:** Calculated on the fly — never stored. `item.cost × (pct / 100)` per item. `packetCosts(id)` returns `{total, paula, gabby}` summed across all items in a packet.
 
-User toggle filters dashboard/records to that user's work and defaults new entry split to 100% for the selected user.
+**Financial year:** 1 April – 31 March (NZ standard).
+
+**Users:** Gabby (default, sage `#5C7A6B`) · Paula (plum `#6E4B5E`). Toggle filters views and defaults new entry split to 100% for selected user.
 
 ---
 
 ## Views / Screens
 
 ### Dashboard (Home)
-- Greeting + today's date, "New Work Packet" button (top right)
-- 4 stat cards: New / Pending / Unbilled / Billed
-- Billing pipeline visualisation (placeholder — workflow coming)
-- Recent packets table (last 5) with edit buttons
-- Sidebar: Quick Actions + Retailer breakdown bar chart
+- Greeting + date · "New Work Packet" button (gold, top right)
+- 3 stat cards: New / Hold from Billing / Billed (Archived excluded)
+- Billing pipeline placeholder (workflow coming with Run Billing)
+- Recent packets table (last 5) · Sidebar: Quick Actions + Retailer breakdown
 
 ### Records
-- All packets table, single search box (searches date, ref, surname)
-- CSV export
+- Filter bar: Status pills · Retailer · User · Date range (Today / This Week / This Month / Last Month / This FY / Last FY / Custom)
+- Single search box (ref, surname, date) across filtered results
+- Cost column: Total / Paula / Gabby depending on User filter
+- Batch status update: checkboxes + toolbar with status dropdown + Apply
+- CSV export of filtered results (includes Total, Paula, Gabby cost columns)
 
 ### New / Edit Work Packet (Form)
-**Sticky header:** Title + Cancel + split Save button (always visible on scroll)
-- **Save** → saves and stays in edit mode (to review or add more items)
-- **Save and Add New** (dropdown) → saves and opens a fresh blank form
+- Sticky header: title + Cancel + split Save button (always visible on scroll)
+  - **Save** → stays in edit mode after saving
+  - **Save and Add New** (dropdown) → saves then opens fresh form
+- **Packet Details:** Date · Retailer* + Ref* side by side · Surname* full width
+- **Items** (up to 3 cards): Item · Job Type (sets cost) · Cost ($, editable) · Work split slider (◀ Paula — Gabby ▶, drag right = Gabby increases, 5% steps)
+- Validation: client-side only, inline red errors, never re-renders on failure
+- Edit mode: `renderAsync()` pre-fetches `packet_items` before rendering. Warning shown if job_type_id missing from lookup.
 
-**Packet Details section** (header — shared across all items):
-- Date picker, Retailer* + Customer Reference* side by side, Surname* full width
-- Mandatory fields marked with `*`, inline red error on save attempt
-- Validation runs client-side only — never re-renders on failure (items preserved)
-
-**Items section** (up to 3 cards, add/remove dynamically):
-- Item (dropdown), Job Type (dropdown, auto-fills cost), Cost (editable, $)
-- Work split slider: ◀ Paula — Gabby ▶. Drag right = Gabby increases. 5% increments.
-- Defaults to 100% for active user
-
-On save: 1 row inserted into `packets` + N rows into `packet_items`.
-On edit load: `fetchPacketItems()` pre-fetches items via `renderAsync()` before form renders. If a job_type_id no longer exists in the lookup, a warning shows on that card.
+### Run Billing (placeholder — coming soon)
+Weekly task: pull new records per user per retailer, generate invoice summary + PDF report. Nav item is greyed out. **Do not add to dashboard stats or reporting until built.**
 
 ---
 
 ## Design System
-**Fonts:** Playfair Display (headings/stats) · Outfit (UI/body) · DM Mono (refs/costs/dates)
+**Fonts:** Playfair Display (headings/stats) · Outfit (UI) · DM Mono (refs/costs/dates)
 
-**Key colours:**
-| Name | Hex | Usage |
+| Colour | Hex | Usage |
 |---|---|---|
-| Deep | #2C2422 | Nav bar, primary buttons |
-| Gold | #B8963E | CTAs, focus rings, slider |
-| Plum | #6E4B5E | Paula, Alexandra badge |
-| Sage | #5C7A6B | Gabby, billed status |
-| Ember | #B85C38 | Queenstown badge, errors |
-| Sky | #4A7A9B | Pending status |
+| Deep | #2C2422 | Nav, primary buttons |
+| Gold | #B8963E | CTAs, focus rings, active states |
+| Plum | #6E4B5E | Paula · Alexandra badge |
+| Sage | #5C7A6B | Gabby · Billed status |
+| Ember | #B85C38 | Queenstown badge · errors |
+| Sky | #4A7A9B | New status |
 
-Light variants (`-light` suffix) used for backgrounds/badges throughout.
+`-light` suffix variants used for badge/icon backgrounds throughout.
 
 ---
 
 ## Code Conventions
-- DOM built with `h(tag, attrs, ...children)` helper
-- SVG icons in `I` object, rendered via `htmlContent` attr
-- Global state in `S` object including `S.editItems` (pre-fetched packet items for edit)
+
+**DOM & State**
+- `h(tag, attrs, ...children)` — DOM builder helper
+- `I` object — SVG icon strings, via `htmlContent` attr
+- `S` — global state object. Key properties: `packets`, `allPacketItems`, `billingStatuses`, `retailers`, `jobTypes`, `items`, `editItems`, `recFilters`, `selectedPacketIds`, `user`, `view`
+
+**Render functions**
 - `render()` — synchronous, rebuilds entire DOM. **Never call from inside a form.**
-- `renderAsync()` — async wrapper; fetches `S.editItems` before calling `render()`. Use for edit navigation.
+- `renderAsync()` — async wrapper; pre-fetches `S.editItems` then calls `render()`. Use for edit navigation.
+
+**Toast**
 - `toast()` — calls `render()`. **Never use inside a form.**
-- `showToast()` — injects toast directly into DOM, no render. Safe inside forms.
-- `fetchPacketItems(packetId)` — fetches packet_items from Supabase for edit mode
-- `dateToISO(s)` — converts DD MMM YYYY → YYYY-MM-DD for date input
-- `fmtD(d)` — formats Date object → DD MMM YYYY for storage
-- `pad3(n)` — pads retailer code to 3 digits
-- Supabase helpers: `sbAll`, `sbInsert`, `sbUpdate`, `sbDelete`, `sbUpsert`
-- IDs generated client-side: `Date.now().toString(36) + random`
-- Dates stored as DD MMM YYYY text (not ISO)
+- `showToast()` — injects toast into existing DOM, no render. **Always use inside forms.**
+
+**Supabase**
+- Helpers: `sbAll`, `sbInsert`, `sbUpdate`, `sbDelete`, `sbUpsert`
+- `fetchPacketItems(packetId)` — loads items for edit mode
+
+**Date & formatting**
+- Stored as DD MMM YYYY text (not ISO)
+- `fmtD(d)` — Date → DD MMM YYYY
+- `dateToISO(s)` — DD MMM YYYY → YYYY-MM-DD (for date input value)
+- `parseStoredDate(s)` — DD MMM YYYY → Date object (for filtering)
+- `pad3(n)` — pads retailer code to "001" format
+- `fmtMoney(n)` — formats as "$60.00"
+
+**Status helpers** (always use name in UI, never raw id)
+- `statusName(id)` · `statusId(name)` · `statusShowDash(id)` · `statusShowReport(id)` · `statusBadgeStyle(name)`
+
+**Cost helpers**
+- `packetCosts(packetId)` — returns `{total, paula, gabby}` calculated from `S.allPacketItems`
+
+**IDs:** Client-generated — `Date.now().toString(36) + random`
 
 ---
 
 ## Workflow
-1. Make changes in this Claude chat or Claude Code
-2. Download updated `AppraisalTracker.html`
+1. Build/change in this chat
+2. Download `AppraisalTracker.html`
 3. Tell Claude Code: *"Replace index.html with the downloaded file and push to GitHub"*
-4. GitHub Pages auto-deploys in ~2 minutes
-5. Database changes: Supabase dashboard → SQL Editor
+4. GitHub Pages deploys in ~2 minutes
+5. DB changes: Supabase → SQL Editor
 
 ---
 
 ## Planned Features
-- Billing status workflow (move packets through pipeline)
-- CSV format matching Solo accounting app invoice import
-- Proper auth / login (replace user toggle)
-- Reporting by retailer for invoice generation
+- Run Billing: invoice summary + PDF report per user per retailer (weekly)
+- Billing pipeline workflow (status changes via dashboard)
+- CSV format matching Solo accounting import
+- Proper auth (replace user toggle)
 
 ---
 
 ## Learnings & Bug Prevention
 
 ### 1. Never trigger render() from inside a form
-**Covers:** Using `toast()` in validation, calling `render()` on error, const hoisting causing crashes.
-
-**The core rule:** Anything that calls `render()` rebuilds the entire DOM — wiping the form and all draft items. This includes `toast()` (which calls `render()` immediately and again after 3 seconds).
-
-**Symptoms:**
-- Form resets after hitting Save (toast was called on validation failure)
-- Blank screen with no error visible (a `const` variable was referenced before declaration, crashing inside a render function)
+`render()` rebuilds the entire DOM — wiping all draft form state including item cards. `toast()` also calls `render()`.
 
 **Rules:**
-- In form validation/error handling: manipulate existing DOM elements directly. Never call `render()` or `toast()`.
-- Use `showToast()` for any feedback inside a form — it injects a toast element without re-rendering.
-- Declare all UI element variables (`const el = h(...)`) **before** any function that references them — `const` is not hoisted like `var`.
-- After a successful save, use `renderAsync()` not `render()` for edit navigation.
+- Form validation: manipulate existing DOM elements only. No `render()`, no `toast()`.
+- Use `showToast()` for in-form feedback.
+- Declare UI variables (`const el = h(...)`) **before** any function that references them — `const` is not hoisted.
+- After save, use `renderAsync()` not `render()` for edit navigation.
+
+**Symptoms:** Form resets on Save (toast called during validation) · Blank screen (const referenced before declaration)
 
 ---
 
-### 2. Never assume all Supabase tables have an `id` column
-**Symptom:** App fails to load with error `42703: column does not exist`.
+### 2. Never assume a Supabase table has an `id` column
+`items` table PK is `name`. Sorting by `id` gives Supabase error `42703: column does not exist`.
 
-**Cause:** The `sbAll` helper was appending `&order=id.asc` to every query. The `items` table PK is `name`.
-
-**Rule:** Each `sbAll` call specifies its own `&order=` param. The `items` table has no `id` — never sort it by id.
+**Rule:** Each `sbAll` call must specify its own `&order=` param explicitly.
 
 ---
 
-### 3. Blank screen = check browser console
-**Rule:** Right-click → Inspect → Console. The error is always there even when the UI shows nothing.
+### 3. Blank screen = open browser console immediately
+Right-click → Inspect → Console. The error is always there.
