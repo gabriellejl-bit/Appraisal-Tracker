@@ -201,6 +201,31 @@ label.field-label{font-size:12px;font-weight:600;text-transform:uppercase;letter
 .add-item-btn:hover{border-color:var(--gold);color:var(--gold);background:var(--gold-light);}
 
 /* -- FORM STICKY HEADER -------------------- */
+/* -- BILLING STATUS CARD -- */
+.billing-status-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px 24px;margin-bottom:16px;}
+.billing-status-card-title{font-family:var(--font-display);font-size:15px;font-weight:600;color:var(--deep);margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border-light);display:flex;align-items:center;justify-content:space-between;}
+.status-lozenges{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;}
+.status-lozenge{font-size:13px;font-weight:600;padding:7px 18px;border-radius:20px;border:1px solid var(--border);background:var(--surface);color:var(--text-muted);cursor:pointer;font-family:var(--font-body);transition:all .15s;}
+.status-lozenge:hover:not(:disabled){border-color:var(--gold);color:var(--gold);}
+.status-lozenge.active-new{background:var(--sky-light);color:var(--sky);border-color:var(--sky);}
+.status-lozenge.active-hold{background:var(--ember-light);color:var(--ember);border-color:var(--ember);}
+.status-lozenge.active-archived{background:var(--border-light);color:var(--text-sec);border-color:var(--text-muted);}
+.status-lozenge:disabled{opacity:.35;cursor:not-allowed;}
+.billing-users-row{display:flex;gap:16px;align-items:center;flex-wrap:wrap;}
+.billing-section-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:8px;}
+.delete-packet-btn{font-size:12px;font-weight:500;color:var(--ember);background:none;border:none;cursor:pointer;font-family:var(--font-body);padding:4px 0;text-decoration:underline;opacity:.7;transition:opacity .15s;}
+.delete-packet-btn:hover{opacity:1;}
+
+/* -- BILLING FLAGS -- */
+.billing-flags{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:4px;}
+.billing-flag-row{display:flex;align-items:center;gap:8px;}
+.billing-flag-name{font-size:13px;font-weight:600;color:var(--text-sec);width:48px;}
+.billing-flag-btn{font-size:12px;font-weight:600;padding:5px 14px;border-radius:20px;border:1px solid;cursor:pointer;font-family:var(--font-body);transition:all .15s;}
+.billing-flag-btn.billed{background:var(--sage-light);color:var(--sage);border-color:var(--sage);}
+.billing-flag-btn.unbilled{background:var(--surface);color:var(--text-muted);border-color:var(--border);}
+.billing-flag-btn:hover{transform:translateY(-1px);}
+.fully-billed-warning{background:var(--ember-light);border:1px solid var(--ember);border-radius:var(--radius);padding:10px 16px;font-size:13px;color:var(--ember);display:flex;align-items:center;gap:10px;margin-bottom:16px;}
+
 .form-sticky-header{position:sticky;top:64px;z-index:90;background:var(--bg);border-bottom:1px solid var(--border);padding:14px 0;margin-bottom:24px;display:flex;align-items:center;justify-content:space-between;gap:16px;}
 .form-sticky-title{font-family:var(--font-display);font-size:20px;font-weight:600;color:var(--deep);}
 .form-sticky-actions{display:flex;gap:10px;}
@@ -461,9 +486,9 @@ async function loadAll(){
     S.users=await sbAll('users','&order=id.asc')||[];
     S.billingStatuses=await sbAll('billing_statuses','&order=id.asc');
     S.packets=await sbAll('packets','&order=created.desc');
-    S.items=await sbAll('items');
+    S.items=await sbAll('items','&order=display_order.asc');
     S.retailers=await sbAll('retailers','&order=name.asc');
-    S.jobTypes=await sbAll('job_types','&order=name.asc');
+    S.jobTypes=await sbAll('job_types','&order=display_order.asc');
     S.online=true;
   }catch(e){console.error(e);S.online=false;throw e;}
   // Load non-critical tables separately -- failures here won't block the app
@@ -681,7 +706,7 @@ function renderNav(){
         // Safely get New status id -- fall back to empty array (show all) if not found
         // No status filter needed - getBillingItems handles excluding Hold/Archived/already-billed
         S.billing.filters={statuses:[],dateRange:'all',dateFrom:'',dateTo:''};
-        S.billing.selectedItemIds=new Set();S.billing.retailers=[];S.billing.retailerIdx=0;
+        S.billing.selectedItemIds=new Set();S.billing.initialised=false;S.billing.retailers=[];S.billing.retailerIdx=0;
         S.billing.generatedPDFs={};S.billing.runId=null;
         render();
       }},' Run Billing'),
@@ -735,9 +760,9 @@ function renderHome(){
     tbl.append(h('thead',{},h('tr',{},h('th',{},'Date'),h('th',{},'Ref'),h('th',{},'Surname'),h('th',{},'Retailer'),h('th',{},'Status'),h('th',{style:{width:'36px'}}))));
     const tb=h('tbody',{});
     for(const r of last5){
-      const eb=h('button',{className:'edit-btn',title:'Edit',onClick:()=>{S.editId=r.id;S.view='edit';renderAsync();}});eb.innerHTML=I.edit;
+      const eb=h('button',{className:'edit-btn',title:'Edit',onClick:e=>{e.stopPropagation();S.editId=r.id;S.view='edit';renderAsync();}});eb.innerHTML=I.edit;
       const retName=retailerName(r.retailer_id);
-      tb.append(h('tr',{},
+      tb.append(h('tr',{style:{cursor:'pointer'},onClick:()=>{S.editId=r.id;S.view='edit';renderAsync();}},
         h('td',{className:'mono'},r.date),h('td',{className:'mono'},r.customer_ref),
         h('td',{className:'name-cell'},r.surname),
         h('td',{},h('span',{className:retName==='Alexandra'?'badge badge-plum':'badge badge-ember'},retName)),
@@ -936,10 +961,11 @@ function renderRecords(){
     const cv=f.user==='paula'?costs.paula:f.user==='gabby'?costs.gabby:costs.total;
     const cb=h('input',{type:'checkbox'});cb.checked=S.selectedPacketIds.has(r.id);
     cb.addEventListener('change',()=>{S.selectedPacketIds[cb.checked?'add':'delete'](r.id);render();});
-    const eb=h('button',{className:'edit-btn',title:'Edit',onClick:()=>{S.editId=r.id;S.view='edit';renderAsync();}});eb.innerHTML=I.edit;
+    cb.addEventListener('click',e=>e.stopPropagation());
+    const eb=h('button',{className:'edit-btn',title:'Edit',onClick:e=>{e.stopPropagation();S.editId=r.id;S.view='edit';renderAsync();}});eb.innerHTML=I.edit;
     const retName=retailerName(r.retailer_id);
     const bl=packetBillingLabel(r);const sn=bl||statusName(r.status_id);
-    tb.append(h('tr',{style:{background:S.selectedPacketIds.has(r.id)?'var(--gold-light)':''}},
+    tb.append(h('tr',{style:{background:S.selectedPacketIds.has(r.id)?'var(--gold-light)':'',cursor:'pointer'},onClick:()=>{S.editId=r.id;S.view='edit';renderAsync();}},
       h('td',{style:{paddingLeft:'14px'}},cb),
       h('td',{className:'mono'},r.date),h('td',{className:'mono'},r.customer_ref),
       h('td',{className:'name-cell'},r.surname),
@@ -1012,8 +1038,8 @@ function renderForm(packet){
           item:row.item||S.items[0]?.name||'',
           jobTypeId:S.jobTypes[0]?.id||null,
           cost:parseFloat(row.cost)||60,
-          paulaPct:row.paula_pct||0,
-          gabriellePct:row.gabrielle_pct||100,
+          paulaPct:row.paula_pct!=null?row.paula_pct:0,
+          gabriellePct:row.gabrielle_pct!=null?row.gabrielle_pct:100,
           _warning:'Job type not found in lookup (id:'+row.job_type_id+')',
         });
       } else {
@@ -1022,8 +1048,8 @@ function renderForm(packet){
           item:row.item||S.items[0]?.name||'',
           jobTypeId:row.job_type_id,
           cost:parseFloat(row.cost)||jt.cost,
-          paulaPct:row.paula_pct||0,
-          gabriellePct:row.gabrielle_pct||100,
+          paulaPct:row.paula_pct!=null?row.paula_pct:0,
+          gabriellePct:row.gabrielle_pct!=null?row.gabrielle_pct:100,
         });
       }
     });
@@ -1090,6 +1116,107 @@ function renderForm(packet){
   surFld.append(surIn,surErr);headerGrid.append(surFld);
 
   headerSection.append(headerGrid);
+
+  // -- BILLING STATUS CARD (edit mode only, above Packet Details) --
+  if(isEdit&&packet){
+    const pBilled=packet.paula_billed||false;
+    const gBilled=packet.gabby_billed||false;
+    const curStatusName=statusName(packet.status_id);
+    const isHold=curStatusName==='Hold from Billing';
+    const isArchived=curStatusName==='Archived';
+    const billingDisabled=isHold||isArchived;
+
+    const billingCard=h('div',{className:'billing-status-card'});
+
+    // Card title + fully billed warning inline
+    const cardTitle=h('div',{className:'billing-status-card-title'});
+    cardTitle.append(document.createTextNode('Billing Status'));
+    if(pBilled&&gBilled){
+      const warn=h('span',{style:{fontSize:'12px',color:'var(--ember)',fontWeight:'500',fontFamily:'var(--font-body)'}});
+      warn.textContent='(!) Both users billed - changes may affect completed invoices';
+      cardTitle.append(warn);
+    }
+    billingCard.append(cardTitle);
+
+    // -- Workflow lozenges: New / Hold from Billing / Archived --
+    billingCard.append(h('div',{className:'billing-section-label'},'Workflow'));
+    const lozengeRow=h('div',{className:'status-lozenges'});
+
+    const lozengeConfig=[
+      {name:'New',cls:'active-new',disabled:false},
+      {name:'Hold from Billing',cls:'active-hold',disabled:pBilled||gBilled},
+      {name:'Archived',cls:'active-archived',disabled:false},
+    ];
+    lozengeConfig.forEach(({name,cls,disabled})=>{
+      const isActive=curStatusName===name;
+      const loz=h('button',{className:'status-lozenge'+(isActive?' '+cls:'')});
+      loz.textContent=name==='Hold from Billing'?'Hold':name;
+      loz.title=name;
+      if(disabled&&!isActive)loz.disabled=true;
+      loz.addEventListener('click',async()=>{
+        if(isActive)return; // already selected
+        const newStatusId=statusId(name);
+        const updateData={status_id:newStatusId,modified:fmtD(new Date())};
+        // Clicking New resets both billed flags
+        if(name==='New'){updateData.paula_billed=false;updateData.gabby_billed=false;}
+        try{
+          await sbUpdate('packets',packet.id,updateData);
+          await loadAll();S.editId=packet.id;S.view='edit';renderAsync();
+        }catch(e2){showToast('Failed: '+e2.message,true);}
+      });
+      lozengeRow.append(loz);
+    });
+    billingCard.append(lozengeRow);
+
+    // -- Per-user billing toggles --
+    billingCard.append(h('div',{className:'billing-section-label',style:{marginTop:'12px'}},'Billed by'));
+    const usersRow=h('div',{className:'billing-users-row'});
+    [{label:'Paula',billedKey:'paula_billed',otherKey:'gabby_billed',otherPctField:'paula_pct'},{label:'Gabby',billedKey:'gabby_billed',otherKey:'paula_billed',otherPctField:'gabrielle_pct'}].forEach(({label,billedKey,otherKey,otherPctField})=>{
+      const isBilled=packet[billedKey]||false;
+      const btn=h('button',{className:'billing-flag-btn '+(isBilled?'billed':'unbilled')});
+      btn.textContent=label+': '+(isBilled?'Billed':'Unbilled');
+      if(billingDisabled)btn.disabled=true;
+      btn.addEventListener('click',async()=>{
+        const newVal=!isBilled;
+        const updateData={[billedKey]:newVal,modified:fmtD(new Date())};
+        if(!newVal){
+          // Reverting to unbilled - reset status to New
+          updateData.status_id=statusId('New');
+        } else {
+          // Marking as billed - check if other user also done
+          const otherBilled=packet[otherKey]||false;
+          const otherNoWork=S.allPacketItems.filter(i=>i.packet_id===packet.id)
+            .every(i=>(i[otherPctField]||0)===0);
+          if(otherBilled||otherNoWork)updateData.status_id=statusId('Billed');
+        }
+        try{
+          await sbUpdate('packets',packet.id,updateData);
+          await loadAll();S.editId=packet.id;S.view='edit';renderAsync();
+        }catch(e2){showToast('Failed: '+e2.message,true);}
+      });
+      usersRow.append(btn);
+    });
+    billingCard.append(usersRow);
+
+    // -- Delete packet button --
+    const delBtn=h('button',{className:'delete-packet-btn',style:{marginTop:'16px',display:'block'},onClick:async()=>{
+      if(!confirm('Delete this packet and all its items? This cannot be undone.'))return;
+      try{
+        // Delete packet_items first, then packet
+        const existingItems=await sbAll('packet_items','&packet_id=eq.'+packet.id)||[];
+        for(const ei of existingItems)await sbDelete('packet_items',ei.id);
+        await sbDelete('packets',packet.id);
+        await loadAll();
+        S.view='records';S.editId=null;
+        toast('Packet deleted');
+      }catch(e2){showToast('Delete failed: '+e2.message,true);}
+    }},'Delete this packet');
+    billingCard.append(delBtn);
+
+    // Insert billing card before packet details
+    wrap.append(billingCard);
+  }
+
   wrap.append(headerSection);
 
   // -- ITEMS SECTION --
@@ -1103,8 +1230,14 @@ function renderForm(packet){
     // Card header
     const cardHdr=h('div',{className:'item-card-header'});
     cardHdr.append(h('span',{className:'item-card-num'},'Item '+(index+1)));
-    if(formItems.length>1){
-      const rmBtn=h('button',{className:'item-card-remove',title:'Remove item',onClick:()=>{
+    // Always show remove button in edit mode; in new mode only when >1 item
+    if(isEdit||formItems.length>1){
+      const rmBtn=h('button',{className:'item-card-remove',title:'Remove item',onClick:async()=>{
+        if(isEdit&&item.id&&!item.id.startsWith('new_')){
+          // Delete from DB immediately
+          try{await sbDelete('packet_items',item.id);}
+          catch(e2){showToast('Delete failed: '+e2.message,true);return;}
+        }
         formItems.splice(index,1);
         rebuildItemsStack();
       }});rmBtn.innerHTML=I.trash;cardHdr.append(rmBtn);
@@ -1233,8 +1366,18 @@ function renderForm(packet){
 
   const splitBtnWrap=h('div',{className:'split-btn-wrap'},saveBtn,arrowBtn,dropdown);
 
+  // Status badge for edit mode
+  const titleRow=h('div',{style:{display:'flex',alignItems:'center',gap:'12px'}});
+  titleRow.append(h('span',{className:'form-sticky-title'},isEditTitle));
+  if(isEdit&&packet){
+    const bl=packetBillingLabel(packet);
+    const sn=bl||statusName(packet.status_id);
+    const badge=h('span',{className:'badge',style:statusBadgeStyle(sn)},sn);
+    titleRow.append(badge);
+  }
+
   const stickyHdr=h('div',{className:'form-sticky-header'},
-    h('span',{className:'form-sticky-title'},isEditTitle),
+    titleRow,
     h('div',{className:'form-sticky-actions'},
       h('button',{className:'btn btn-secondary',onClick:()=>{S.view='home';S.editId=null;render();}},'Cancel'),
       splitBtnWrap,
@@ -1436,10 +1579,11 @@ function renderBillingStep1(){
   const allItems=getBillingItems();
   const user=S.user;
 
-  // Auto-select all items on first load only (Set is empty)
-  // User toggle resets the Set to empty, triggering this on next render
-  if(allItems.length&&b.selectedItemIds.size===0){
+  // Auto-select all items on first load only
+  // Use initialised flag so unchecking all doesn't re-trigger auto-select
+  if(allItems.length&&!b.initialised){
     allItems.forEach(i=>b.selectedItemIds.add(i.id));
+    b.initialised=true;
   }
 
   // selCount declared here so it's in scope for the footer

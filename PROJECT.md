@@ -1,277 +1,246 @@
-# Billing Tracker — Project Context
+# Billing Tracker - Project Context
 
 ## Purpose
-A billing tracker for jewellery appraisal work. Paula and Gabby perform valuations for jewellery retailers and track work for invoicing. Each job is identified by the retailer's POS reference number. **Retailer is the primary billing entity** — Paula and Gabby invoice each retailer separately based on their work split percentage.
+A billing tracker for jewellery appraisal work. Paula and Gabby perform valuations for jewellery retailers and track work for invoicing. Each job is identified by the retailer's POS reference number. Retailer is the primary billing entity - Paula and Gabby invoice each retailer separately based on their work split percentage.
 
 ## URLs
-- **Live:** https://gabriellejl-bit.github.io/Appraisal-Tracker/
-- **Repo:** https://github.com/gabriellejl-bit/Appraisal-Tracker
+- Live: https://gabriellejl-bit.github.io/Appraisal-Tracker/
+- Repo: https://github.com/gabriellejl-bit/Appraisal-Tracker
 
 ## Stack
-- **Frontend:** Single HTML file (`index.html`) — vanilla JS, no framework
-- **Database:** Supabase (PostgreSQL) via REST API — no SDK, raw fetch
-- **Hosting:** GitHub Pages
-- **Auth:** None yet — user toggle in nav (Paula / Gabby)
-- **Supabase URL:** `https://ytmyfarsptkezxkgpcbo.supabase.co`
-- **Supabase Key:** `sb_publishable_2POAMJdA5U1FPSgxzDy1oA_EfCnF6I2`
+- Frontend: Single HTML file (index.html) - vanilla JS, no framework
+- Database: Supabase (PostgreSQL) via REST API - no SDK, raw fetch
+- Hosting: GitHub Pages
+- Auth: None yet - user toggle in nav. Email/password via Supabase Auth planned.
 - RLS enabled with open policies (no auth yet)
+
+## Environments
+
+| | Production | Dev |
+|---|---|---|
+| File | index.html (on GitHub) | AppraisalTracker-dev.html (local only, never committed) |
+| Supabase URL | https://ytmyfarsptkezxkgpcbo.supabase.co | https://xwripwrfqdddfomzfjaq.supabase.co |
+| Supabase Key | sb_publishable_2POAMJdA5U1FPSgxzDy1oA_EfCnF6I2 | sb_publishable_FktRKmVGhdS5SzeJ7g6phQ_n9m4iDcm |
+| Browser tab | "Billing Tracker" | "Billing Tracker [DEV]" |
+| Data | Real production data | Safe to break |
+
+Only difference between files: SB_URL, SB_KEY constants and title tag.
 
 ---
 
 ## Database Schema
 
-All lookup tables maintained directly in Supabase — no in-app editing.
+### users
+id SERIAL PK, name TEXT, slug TEXT UNIQUE, colour TEXT, gst_registered BOOLEAN, gst_rate DECIMAL(5,2), income_tax_rate DECIMAL(5,2), active BOOLEAN
+- Gabby: slug=gabby, colour=#5C7A6B, gst_registered=true, gst_rate=15, income_tax_rate=33
+- Paula: slug=paula, colour=#6E4B5E, gst_registered=false, gst_rate=0, income_tax_rate=17.5
+- Nav toggle built dynamically from active users. Falls back to hardcoded if table not loaded.
 
-### `billing_statuses` (lookup)
-| Column | Type | Notes |
-|---|---|---|
-| id | SERIAL PK | |
-| name | TEXT | "New", "Hold from Billing", "Billed", "Archived" |
-| show_in_dashboard | BOOLEAN | Archived = false |
-| show_in_reports | BOOLEAN | Archived = false |
+### billing_statuses (lookup)
+id, name, show_in_dashboard BOOLEAN, show_in_reports BOOLEAN
+Values: New (1), Hold from Billing (2), Billed (3), Archived (4 - hidden everywhere)
+Always use name in UI. IDs are system-only. "Billed" is auto-managed only - never set manually.
 
-**Always use `name` in the UI. IDs are system-only.**
-Statuses: New (1), Hold from Billing (2), Billed (3), Archived (4)
+### retailers (lookup)
+id, name, code INTEGER (displays as "001")
+Values: Alexandra (1), Queenstown (2)
 
-### `retailers` (lookup)
-| Column | Type | Notes |
-|---|---|---|
-| id | SERIAL PK | |
-| name | TEXT | "Alexandra", "Queenstown" |
-| code | INTEGER | e.g. 1 displays as "001" |
+### items (lookup)
+name TEXT PK, display_order INTEGER
+WARNING: PK is name - no id column. Never sort with order=id.asc.
+Sort by: &order=display_order.asc
 
-### `items` (lookup)
-| Column | Type | Notes |
-|---|---|---|
-| name | TEXT PK | e.g. "Ring", "Watch" |
+### job_types (lookup)
+id, name, cost DECIMAL(10,2), display_order INTEGER
+Sort by: &order=display_order.asc
 
-⚠️ PK is `name` — **no `id` column**. Never sort with `order=id.asc`.
+### packets
+id TEXT PK (client-generated), date TEXT (DD MMM YYYY), retailer_id FK, customer_ref TEXT (e.g. "001-12345"), surname TEXT, status_id FK -> billing_statuses, paula_billed BOOLEAN, gabby_billed BOOLEAN, created/modified TEXT
 
-### `job_types` (lookup)
-| Column | Type | Notes |
-|---|---|---|
-| id | SERIAL PK | |
-| name | TEXT | e.g. "Standard - Stoneset" |
-| cost | DECIMAL(10,2) | Default cost |
+### packet_items
+id TEXT PK, packet_id FK, item TEXT, job_type_id FK, cost DECIMAL, paula_pct INTEGER, gabrielle_pct INTEGER (must sum to 100)
 
-### `packets`
-| Column | Type | Notes |
-|---|---|---|
-| id | TEXT PK | Client-generated |
-| date | TEXT | DD MMM YYYY |
-| retailer_id | INTEGER FK | → retailers |
-| customer_ref | TEXT | Full ref e.g. "001-12345" |
-| surname | TEXT | Only customer identifier stored |
-| status_id | INTEGER FK | → billing_statuses |
-| created / modified | TEXT | DD MMM YYYY |
+### billing_runs
+id TEXT PK, run_date TEXT, user_name TEXT (slug), retailer_ids TEXT (comma-separated), packet_ids TEXT (comma-separated), status TEXT, created TEXT
 
-### `packet_items`
-| Column | Type | Notes |
-|---|---|---|
-| id | TEXT PK | Client-generated |
-| packet_id | TEXT FK | → packets |
-| item | TEXT | From items lookup |
-| job_type_id | INTEGER FK | → job_types |
-| cost | DECIMAL(10,2) | Editable, defaults from job_type |
-| paula_pct / gabrielle_pct | INTEGER | 0–100, must sum to 100 |
-
-### `billing_runs`
-| Column | Type | Notes |
-|---|---|---|
-| id | TEXT PK | Client-generated |
-| run_date | TEXT | DD MMM YYYY |
-| user_name | TEXT | "paula" or "gabby" |
-| retailer_ids | TEXT | Comma-separated retailer ids |
-| packet_ids | TEXT | Comma-separated packet ids |
-| status | TEXT | "completed" |
-| created | TEXT | DD MMM YYYY |
-
-### `appraisals` — legacy, not written to
+### appraisals - legacy, not written to
 
 ---
 
 ## Key Concepts
 
-**Customer reference:** Stored as `001-12345`. Retailer auto-fills the 3-digit prefix; user types 4–5 digit suffix. Tab from retailer jumps to suffix input.
+**Customer reference:** Stored as "001-12345". Retailer auto-fills 3-digit prefix; user types 4-5 digit suffix.
 
-**Cost split:** Calculated on the fly — never stored. `item.cost × (pct/100)` per item. `packetCosts(id)` returns `{total, paula, gabby}`.
+**Cost split:** Calculated on the fly - never stored. packetCosts(id) returns {total, paula, gabby}.
 
-**Financial year:** 1 April – 31 March (NZ).
+**Per-user billing flags:** paula_billed and gabby_billed track each user independently. When both true (or one user has 0% work on all items), status_id is auto-set to Billed. "Billed" status is never set manually.
 
-**Users:** Gabby (default, sage `#5C7A6B`) · Paula (plum `#6E4B5E`). Toggle filters views and defaults split to 100% for selected user.
+**Billing status display:** packetBillingLabel(pkt) returns "Billed (Paula)", "Billed (Gabby)", "Fully Billed" - overrides status_id in UI badges.
 
-**Non-critical table loading:** `packet_items` and `billing_runs` are loaded outside the main `loadAll()` try/catch so a failure on either doesn't block the app from booting.
+**Workflow statuses (user-selectable):** New, Hold from Billing, Archived. Hold freezes billing toggles but allows editing packet details/items. Archived freezes billing toggles.
+
+**GST:** Conditional per user from users table. Gabby: subtotal + GST (15%) + Total. Paula: subtotal + Total only. Rate stored in users table - change in Supabase, no code needed.
+
+**Financial year:** 1 April - 31 March (NZ).
+
+**Non-critical table loading:** users, packet_items, billing_runs load in separate try/catch - failures don't block boot.
+
+**Falsy trap:** Never use || for numeric defaults where 0 is a valid value. Use != null check instead.
+e.g. row.gabrielle_pct != null ? row.gabrielle_pct : 100 (not row.gabrielle_pct || 100)
 
 ---
 
 ## Views / Screens
 
 ### Dashboard
-- Greeting + "New Work Packet" button · 3 stat cards (New / Hold from Billing / Billed) · Billing pipeline placeholder · Recent packets (last 5) · Retailer breakdown sidebar
+- Greeting + "New Work Packet" button
+- 3 dollar cards (current user's share): Unbilled / Earned This Week / Earned This Month
+  - Unbilled: excludes Hold and Archived, not yet billed by this user
+  - Earned This Week/Month: includes billed AND unbilled, excludes Hold and Archived
+- 4 status count cards (smaller): New / On Hold / Part Billed / Fully Billed
+- Recent packets table (last 5) - whole row clickable to edit
+- Retailer breakdown sidebar
 
 ### Records
-- Filter bar: Status pills · Retailer · User · Date range (presets + custom) · Search · Reset
-- Cost column (Total / Paula / Gabby per User filter) · Batch status update · CSV export of filtered results
+- Filter bar: Status pills, Retailer, User (All/Paula/Gabby), Date range (presets + custom), Search, Reset
+- Cost column (Total/Paula/Gabby based on User filter)
+- Whole row clickable to edit. Checkbox stops propagation (doesn't trigger row click).
+- Batch status update toolbar
+- CSV export of filtered results (includes cost split columns)
 
 ### New / Edit Work Packet
-- Sticky header: Cancel + split Save button (Save = stays in edit mode; Save and Add New = fresh form)
-- Packet Details: Date · Retailer* + Ref* · Surname*
-- Items (up to 3 cards): Item · Job Type · Cost · Split slider (drag right = Gabby increases, 5% steps)
-- Validation: client-side only, inline red errors, never re-renders on failure
-- Edit mode: `renderAsync()` pre-fetches `packet_items` before rendering
+- Sticky header: title + computed status badge (edit mode) + Cancel + split Save button
+- **Edit mode only - Billing Status card (above Packet Details):**
+  - Workflow lozenges: New / Hold / Archived (immediate save, Hold disabled if either user billed)
+  - Clicking New resets both billed flags to false
+  - Billing toggles: "Paula: Billed/Unbilled" and "Gabby: Billed/Unbilled" (immediate save, disabled when Hold or Archived)
+  - Fully Billed warning shown inline when both users billed
+  - Delete packet button (confirmation prompt, deletes packet_items then packet)
+- Packet Details: Date, Retailer + Ref (auto-prefix), Surname
+- Items (up to 3 cards): Item (ordered by display_order), Job Type (ordered by display_order), Cost ($), Split slider (drag right = Gabby increases, 5% steps)
+  - Item trash icon: always visible in edit mode, deletes from packet_items immediately
+- Client-side validation only - never re-renders on failure
+- Edit mode: renderAsync() pre-fetches packet_items. gabrielle_pct=0 loads correctly (not defaulted to 100).
 
-### Run Billing
-Multi-step flow — navigate via nav link:
-1. **Selection:** Filter by status/date, all matching packet_items listed, pre-checked. "Start" button.
-2. **Retailer loop (modal):** One screen per retailer. Items table + invoice summary (Job Types, user cost, subtotal, GST 15%, total). Back / Next / "Generate PDFs" on last retailer.
-3. **Generate PDFs:** Preview + download per retailer (jsPDF, portrait A4). "Download All" if multiple. "Confirm + Mark as Billed" button.
-4. **Confirm:** Packet counts per retailer, marks all selected packets as Billed, saves billing run to Supabase.
+### Run Billing (4 steps)
+1. Selection: filter by status/date, pre-checked items (excludes Hold/Archived/already billed by this user, excludes 0% items). Start button. Uses initialised flag for auto-select (not Set.size).
+2. Retailer modal loop: items table + invoice summary (Job Types, user cost, subtotal, GST if registered, total). Back/Next/Generate PDFs.
+3. Generate PDFs: preview + download per retailer (jsPDF, portrait A4). Download All. Confirm + Mark as Billed.
+4. Confirm: sets paula_billed or gabby_billed = true. Auto-sets status to Billed if other user done or has 0% work. Saves billing run.
 
 ### Reports
-- List of billing runs (date, user, retailers, packet count)
-- Regenerate PDFs from any past run · Delete run
+List of billing runs - regenerate PDFs - delete run
 
 ---
 
 ## Design System
-**Fonts:** Playfair Display (headings/stats) · Outfit (UI) · DM Mono (refs/costs/dates)
-
-| Colour | Hex | Usage |
-|---|---|---|
-| Deep | #2C2422 | Nav, primary buttons |
-| Gold | #B8963E | CTAs, focus rings, Run Billing |
-| Plum | #6E4B5E | Paula · Alexandra badge |
-| Sage | #5C7A6B | Gabby · Billed |
-| Ember | #B85C38 | Queenstown · errors |
-| Sky | #4A7A9B | New status |
-
-`-light` suffix variants used for backgrounds/badges.
+Fonts: Playfair Display (headings) - Outfit (UI) - DM Mono (refs/costs)
+Colours stored in users table per user.
+Deep #2C2422 (nav) - Gold #B8963E (CTAs) - Plum #6E4B5E (Paula/Alexandra) - Sage #5C7A6B (Gabby/Billed) - Ember #B85C38 (errors) - Sky #4A7A9B (New status)
+-light suffix variants for backgrounds/badges.
 
 ---
 
 ## Code Conventions
 
-**State:** `S` object — key props: `packets`, `allPacketItems`, `billingStatuses`, `retailers`, `jobTypes`, `items`, `editItems`, `recFilters`, `selectedPacketIds`, `billing`, `billingRuns`, `user`, `view`
+State (S object): packets, allPacketItems, billingStatuses, users, retailers, jobTypes, items, editItems, recFilters, selectedPacketIds, billing (incl. initialised flag), billingRuns, user (slug), view
 
-**Render:** `render()` rebuilds entire DOM. `renderAsync()` pre-fetches edit data first. **Never call either from inside a form or validation handler.**
+Render: render() rebuilds entire DOM. renderAsync() pre-fetches edit data. Never call from inside a form.
 
-**Toast:** `toast()` calls `render()` — never use inside forms. Use `showToast()` instead (direct DOM inject, no re-render).
+Toast: toast() calls render() - never inside forms. Use showToast() (direct DOM inject).
 
-**Supabase helpers:** `sbAll`, `sbInsert`, `sbUpdate`, `sbDelete`, `sbUpsert`, `fetchPacketItems(id)`
+Supabase helpers: sbAll, sbInsert, sbUpdate, sbDelete, sbUpsert, fetchPacketItems(id)
 
-**Key helpers:** `fmtD(d)` · `dateToISO(s)` · `parseStoredDate(s)` · `pad3(n)` · `fmtMoney(n)` · `packetCosts(id)` · `getBillingItems()` · `buildInvoiceSummary(items, retailerId)` · `statusName(id)` · `statusId(name)` · `statusBadgeStyle(name)` · `statusShowDash(id)`
+Key helpers:
+- getCurrentUser() - full user row with fallback defaults (call once per function, not cu2/cu3/cu4)
+- getDollarStats() - {unbilled, earnedWeek, earnedMonth} for current user
+- packetCosts(id) - {total, paula, gabby} from allPacketItems
+- packetBillingLabel(pkt) - "Billed (Paula)" / "Billed (Gabby)" / "Fully Billed" / null
+- userHasBilled(pkt), userHasNoWork(pktId)
+- getBillingItems() - filtered items for Run Billing step 1
+- buildInvoiceSummary(items, retailerId) - job type totals for invoice modal
+- fmtD(d), dateToISO(s), parseStoredDate(s), pad3(n), fmtMoney(n)
+- statusName(id), statusId(name), statusBadgeStyle(name), statusShowDash(id)
 
-**IDs:** Client-generated — `Date.now().toString(36) + random`
+IDs: Client-generated - Date.now().toString(36) + random
+
+Known refactor debt (non-urgent):
+- Some render functions still use inline user ternaries instead of getCurrentUser()
+- cu2/cu3/cu4 in billing report should be one getCurrentUser() call at top
+- otherPctField mapping in billing flags could be derived from users table
 
 ---
 
 ## Workflow
-1. Build here in chat · Download `AppraisalTracker.html`
-2. Claude Code: *"Replace index.html with downloaded file and push to GitHub"*
-3. GitHub Pages deploys in ~2 minutes
-4. DB changes: Supabase → SQL Editor
+
+1. Build and test in AppraisalTracker-dev.html against dev Supabase
+2. When happy, swap credentials to prod and provide AppraisalTracker.html
+3. Claude Code: "Replace index.html with downloaded file and push to GitHub"
+4. GitHub Pages deploys in ~2 minutes
+5. DB schema changes: run SQL in dev first, then prod
 
 ---
 
 ## Planned Features
-- Billing pipeline workflow (status changes from dashboard)
+- Proper auth (email/password via Supabase Auth)
 - CSV format matching Solo accounting import
-- Proper auth (replace user toggle)
+- Billing pipeline workflow (status changes from dashboard)
+- Refactor: consolidate getCurrentUser() calls, clean up cu2/cu3/cu4
 
 ---
 
 ## Learnings & Bug Prevention
 
-This codebase has a consistent set of failure patterns. Read this before making any changes.
+Read before making any changes.
 
----
+### Rule 1 - Variable declaration order (const/let hoisting)
+const and let are NOT hoisted. Referencing before declaration = ReferenceError = blank screen.
+Hit us repeatedly: addItemBtn, saveBtn, selCount all declared after code that used them.
+Rule: Declare variables before any function or code that references them.
 
-### Rule 1 — Variable declaration order matters (const/let hoisting)
+### Rule 2 - Never trigger render() from inside a form
+render() wipes entire DOM including draft form state. toast() also calls render() twice.
+Rule: Form validation must only manipulate existing DOM elements. Use showToast(). Use renderAsync() after save.
 
-`const` and `let` are NOT hoisted like `var`. A variable referenced before its declaration line throws `ReferenceError: Cannot access 'X' before initialization` — the app shows a blank screen with no visible UI error.
+### Rule 3 - Non-critical Supabase tables must load separately
+Any throw in loadAll()'s main try block aborts boot before S.ready=true = permanent spinner.
+Rule: Load users, packet_items, billing_runs in their own try/catch blocks.
 
-**This bit us multiple times:**
-- `addItemBtn` declared after `rebuildItemsStack` which referenced it
-- `saveBtn` declared after `doSave` which referenced it
-- `selCount` declared after code that tried to use it
+### Rule 4 - Never assume a Supabase table has an id column
+items PK is name. Using order=id.asc throws 42703 column does not exist.
+Rule: Every sbAll call specifies its own explicit order param.
 
-**Rules:**
-- Always declare variables **before** any function or code that references them
-- In render functions, declare all element variables at the top before any logic that uses them
-- Before delivering a file, check: does any function reference a variable declared later in the same scope?
+### Rule 5 - No non-ASCII characters in JavaScript
+Non-ASCII chars = SyntaxError = loading spinner.
+Use: -> not arrows, -- not em-dashes, - not middle dots, // === not box-drawing, \\n not literal newlines.
+After Python codegen: scan script block for non-ASCII before delivering.
 
----
+### Rule 6 - Never disable primary action buttons
+Handle empty state in click handler with showToast() instead.
 
-### Rule 2 — Never trigger render() from inside a form
+### Rule 7 - Blank screen = browser console first
+Right-click -> Inspect -> Console.
 
-`render()` rebuilds the entire DOM, wiping all draft form state (item cards, field values, everything). `toast()` also calls `render()` — twice (immediately + after 3 seconds via setTimeout).
+### Rule 8 - Auto-select must use an initialised flag, not Set.size
+Set.size===0 re-triggers auto-select when user unchecks all items, making checkboxes non-functional.
+Rule: Use an explicit b.initialised flag. Reset it when context changes (user toggle, nav click).
 
-**Symptoms:** Form resets on Save · Item cards disappear after validation error
+### Rule 9 - Never use || for numeric defaults where 0 is valid
+row.gabrielle_pct || 100 treats 0 as falsy, defaulting 100% Paula items to 100% Gabby on load.
+Rule: Use explicit null check: row.gabrielle_pct != null ? row.gabrielle_pct : 100
 
-**Rules:**
-- Form validation: manipulate existing DOM elements directly only. No `render()`, no `toast()`.
-- Use `showToast()` for any in-form feedback — it injects directly into DOM without re-rendering.
-- After successful save: `renderAsync()` handles navigation, not `render()`.
+### Rule 10 - stopPropagation on nested interactive elements in clickable rows
+When a table row has an onClick, nested buttons and checkboxes must call e.stopPropagation()
+to prevent the row click from firing when the user interacts with them.
 
----
-
-### Rule 3 — Non-critical Supabase tables must load separately
-
-If any `await` inside `loadAll()`'s main `try` block throws, the entire boot sequence aborts before `S.ready=true` — causing a permanent loading spinner with no error visible in the UI (only in the console).
-
-**Tables that caused this:** `packet_items`, `billing_runs`
-
-**Rule:** Load non-critical tables in their own `try/catch` blocks after the main block. A failure on these should warn to console but never block the app from loading.
-
-```js
-try { S.allPacketItems = await sbAll('packet_items', ...); }
-catch(e) { console.warn('packet_items failed:', e); S.allPacketItems = []; }
-```
-
----
-
-### Rule 4 — Never assume a Supabase table has an `id` column
-
-`items` table PK is `name`. Querying with `order=id.asc` throws Supabase error `42703: column does not exist`.
-
-**Rule:** Every `sbAll` call specifies its own explicit `&order=` param. Never add a default order.
-
----
-
-### Rule 5 — No non-ASCII characters in JavaScript
-
-Non-ASCII characters (unicode arrows `→`, box-drawing `═`, em-dashes `—`, warning signs `⚠`, middle dots `·`) in JS strings or comments cause `SyntaxError: Invalid or unexpected token`, which crashes the entire script block. The app shows a loading spinner.
-
-**This hit us with:** comment dividers using `═══`, button labels with `→`, section titles with `·`, literal newlines inside `\n` strings.
-
-**Rules:**
-- JS strings: ASCII only. Use `->` not `→`, `--` not `—`, `-` not `·`
-- Comment dividers: use `// ===` not `// ═══`
-- After building new code with Python, run a character scan to verify no non-ASCII in the script block
-- `\n` in a Python-generated JS string must be `\\n` in the Python source to produce a literal backslash-n
-
----
-
-### Rule 6 — Never use disabled buttons for primary actions
-
-A disabled Start/Save button that stays disabled due to a state bug gives no feedback and no way to proceed. The user has no idea why nothing is happening.
-
-**Rule:** Primary action buttons should always be clickable. Handle the "nothing selected" case inside the click handler with a `showToast()` message, not by disabling the button.
-
----
-
-### Rule 7 — Blank screen = browser console first
-
-Right-click → Inspect → Console. The error is always there, even when the UI shows nothing. Check this before asking for help — the error message usually identifies the exact line and variable.
-
----
-
-### Pre-delivery checklist (run before every file handoff)
-
-- [ ] No `const`/`let` variable referenced before its declaration in the same scope
-- [ ] No `render()` or `toast()` called inside a form validation or error handler
-- [ ] Non-critical Supabase tables loaded in separate `try/catch` blocks
-- [ ] No non-ASCII characters in the `<script>` block
-- [ ] No literal newlines inside JS string literals
-- [ ] No duplicate variable declarations (`const X` appearing twice in same scope)
-- [ ] Primary action buttons are not `disabled` — handle empty state in click handler
+### Pre-delivery checklist
+- [ ] No const/let referenced before declaration in same scope
+- [ ] No render() or toast() inside form validation
+- [ ] Non-critical tables in separate try/catch
+- [ ] No non-ASCII in script block
+- [ ] No literal newlines in JS strings
+- [ ] No duplicate variable declarations in same scope
+- [ ] Primary buttons not disabled - handle empty state in click handler
+- [ ] Auto-select uses initialised flag not Set.size
+- [ ] Numeric defaults use != null not ||
+- [ ] Nested interactive elements in clickable rows have stopPropagation
