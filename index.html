@@ -201,6 +201,31 @@ label.field-label{font-size:12px;font-weight:600;text-transform:uppercase;letter
 .add-item-btn:hover{border-color:var(--gold);color:var(--gold);background:var(--gold-light);}
 
 /* -- FORM STICKY HEADER -------------------- */
+/* -- BILLING STATUS CARD -- */
+.billing-status-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px 24px;margin-bottom:16px;}
+.billing-status-card-title{font-family:var(--font-display);font-size:15px;font-weight:600;color:var(--deep);margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border-light);display:flex;align-items:center;justify-content:space-between;}
+.status-lozenges{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;}
+.status-lozenge{font-size:13px;font-weight:600;padding:7px 18px;border-radius:20px;border:1px solid var(--border);background:var(--surface);color:var(--text-muted);cursor:pointer;font-family:var(--font-body);transition:all .15s;}
+.status-lozenge:hover:not(:disabled){border-color:var(--gold);color:var(--gold);}
+.status-lozenge.active-new{background:var(--sky-light);color:var(--sky);border-color:var(--sky);}
+.status-lozenge.active-hold{background:var(--ember-light);color:var(--ember);border-color:var(--ember);}
+.status-lozenge.active-archived{background:var(--border-light);color:var(--text-sec);border-color:var(--text-muted);}
+.status-lozenge:disabled{opacity:.35;cursor:not-allowed;}
+.billing-users-row{display:flex;gap:16px;align-items:center;flex-wrap:wrap;}
+.billing-section-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:8px;}
+.delete-packet-btn{font-size:12px;font-weight:500;color:var(--ember);background:none;border:none;cursor:pointer;font-family:var(--font-body);padding:4px 0;text-decoration:underline;opacity:.7;transition:opacity .15s;}
+.delete-packet-btn:hover{opacity:1;}
+
+/* -- BILLING FLAGS -- */
+.billing-flags{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:4px;}
+.billing-flag-row{display:flex;align-items:center;gap:8px;}
+.billing-flag-name{font-size:13px;font-weight:600;color:var(--text-sec);width:48px;}
+.billing-flag-btn{font-size:12px;font-weight:600;padding:5px 14px;border-radius:20px;border:1px solid;cursor:pointer;font-family:var(--font-body);transition:all .15s;}
+.billing-flag-btn.billed{background:var(--sage-light);color:var(--sage);border-color:var(--sage);}
+.billing-flag-btn.unbilled{background:var(--surface);color:var(--text-muted);border-color:var(--border);}
+.billing-flag-btn:hover{transform:translateY(-1px);}
+.fully-billed-warning{background:var(--ember-light);border:1px solid var(--ember);border-radius:var(--radius);padding:10px 16px;font-size:13px;color:var(--ember);display:flex;align-items:center;gap:10px;margin-bottom:16px;}
+
 .form-sticky-header{position:sticky;top:64px;z-index:90;background:var(--bg);border-bottom:1px solid var(--border);padding:14px 0;margin-bottom:24px;display:flex;align-items:center;justify-content:space-between;gap:16px;}
 .form-sticky-title{font-family:var(--font-display);font-size:20px;font-weight:600;color:var(--deep);}
 .form-sticky-actions{display:flex;gap:10px;}
@@ -333,6 +358,12 @@ let S={
   recFilters:{search:'',statuses:[],showArchived:false,retailerId:null,user:'all',dateRange:'all',dateFrom:'',dateTo:''},
   selectedPacketIds:new Set(),
   // Run Billing state
+  customerReport:{
+    retailerId:null,
+    dateFrom:'',
+    dateTo:'',
+    dateRange:'month',
+  },
   billing:{
     step:0,           // 0=off, 1=selection, 2=retailer loop, 3=generate, 4=confirm
     filters:{statuses:[],dateRange:'all',dateFrom:'',dateTo:''},
@@ -342,9 +373,10 @@ let S={
     generatedPDFs:{}, // retailerName -> blob url
     runId:null,
   },
-  billingRuns:[],     // loaded from Supabase
+  billingRuns:[],users:[],     // loaded from Supabase
   view:'home',editId:null,search:'',
-  toast:null,tt:null,ready:false,online:true,user:'gabby'
+  toast:null,tt:null,ready:false,online:true,user:'gabby',
+  currentUser:null  // full user row from users table
 };
 
 function fmtD(d){const m=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];return String(d.getDate()).padStart(2,'0')+' '+m[d.getMonth()]+' '+d.getFullYear();}
@@ -368,11 +400,45 @@ function statusId(name){const s=S.billingStatuses.find(x=>x.name===name);return 
 function statusShowDash(id){const s=S.billingStatuses.find(x=>x.id===id);return s?s.show_in_dashboard:true;}
 function statusShowReport(id){const s=S.billingStatuses.find(x=>x.id===id);return s?s.show_in_reports:true;}
 // Badge colour per status name
+// Computed per-packet billing display status based on per-user billed flags
+// Returns a display label and style independent of status_id
+function packetBillingLabel(pkt){
+  const pb=pkt.paula_billed||false;
+  const gb=pkt.gabby_billed||false;
+  if(pb&&gb)return 'Fully Billed';
+  // Check if the other user has 0% on all items - if so, treat as Fully Billed
+  const items=S.allPacketItems.filter(i=>i.packet_id===pkt.id);
+  if(pb&&items.length&&items.every(i=>(i.gabrielle_pct||0)===0))return 'Fully Billed';
+  if(gb&&items.length&&items.every(i=>(i.paula_pct||0)===0))return 'Fully Billed';
+  if(pb)return 'Billed (Paula)';
+  if(gb)return 'Billed (Gabby)';
+  return null; // fall through to status_id label
+}
+
+// Returns true if the current user has billed this packet
+// or has 0% on all items (nothing to invoice)
+function userHasBilled(pkt){
+  const user=S.user;
+  if(user==='paula')return pkt.paula_billed||false;
+  return pkt.gabby_billed||false;
+}
+
+// Returns true if current user has 0% on ALL items in a packet
+function userHasNoWork(pktId){
+  const user=S.user;
+  const items=S.allPacketItems.filter(i=>i.packet_id===pktId);
+  if(!items.length)return false;
+  return items.every(i=>(user==='paula'?(i.paula_pct||0):(i.gabrielle_pct||0))===0);
+}
+
 function statusBadgeStyle(name){
   const map={
     'New':{background:'var(--sky-light)',color:'var(--sky)'},
     'Hold from Billing':{background:'var(--ember-light)',color:'var(--ember)'},
     'Billed':{background:'var(--sage-light)',color:'var(--sage)'},
+    'Fully Billed':{background:'var(--sage-light)',color:'var(--sage)'},
+    'Billed (Paula)':{background:'var(--plum-light)',color:'var(--plum)'},
+    'Billed (Gabby)':{background:'var(--sage-light)',color:'var(--sage)'},
     'Archived':{background:'var(--border-light)',color:'var(--text-muted)'},
   };
   return map[name]||{background:'var(--bg-warm)',color:'var(--text-sec)'};
@@ -427,11 +493,12 @@ function showToast(m,w){
 
 async function loadAll(){
   try{
+    S.users=await sbAll('users','&order=id.asc')||[];
     S.billingStatuses=await sbAll('billing_statuses','&order=id.asc');
     S.packets=await sbAll('packets','&order=created.desc');
-    S.items=await sbAll('items');
+    S.items=await sbAll('items','&order=display_order.asc');
     S.retailers=await sbAll('retailers','&order=name.asc');
-    S.jobTypes=await sbAll('job_types','&order=name.asc');
+    S.jobTypes=await sbAll('job_types','&order=display_order.asc');
     S.online=true;
   }catch(e){console.error(e);S.online=false;throw e;}
   // Load non-critical tables separately -- failures here won't block the app
@@ -439,6 +506,54 @@ async function loadAll(){
   catch(e){console.warn('packet_items load failed:',e);S.allPacketItems=[];}
   try{S.billingRuns=await sbAll('billing_runs','&order=created.desc')||[];}
   catch(e){console.warn('billing_runs load failed:',e);S.billingRuns=[];}
+}
+
+// Helper to get the full user object for the current user slug
+function getCurrentUser(){
+  return S.users.find(u=>u.slug===S.user)||{
+    name:S.user==='paula'?'Paula':'Gabby',
+    slug:S.user,
+    colour:S.user==='paula'?'#6E4B5E':'#5C7A6B',
+    gst_registered:S.user!=='paula',
+    gst_rate:S.user==='paula'?0:15,
+    income_tax_rate:S.user==='paula'?17.5:33,
+  };
+}
+
+// Dollar value stats for current user
+function getDollarStats(){
+  const user=S.user;
+  const now=new Date();
+  const yr=now.getFullYear(),mo=now.getMonth(),day=now.getDate();
+  // Week start (Monday)
+  const weekStart=new Date(yr,mo,day-((now.getDay()+6)%7));weekStart.setHours(0,0,0,0);
+  const monthStart=new Date(yr,mo,1);
+
+  let unbilled=0,earnedWeek=0,earnedMonth=0;
+
+  S.packets.forEach(p=>{
+    const userBilled=user==='paula'?(p.paula_billed||false):(p.gabby_billed||false);
+    const sName=statusName(p.status_id);
+    if(sName==='Archived')return;
+    const items=S.allPacketItems.filter(i=>i.packet_id===p.id);
+    const userShare=items.reduce((sum,i)=>{
+      const cost=parseFloat(i.cost)||0;
+      const pct=(user==='paula'?(i.paula_pct||0):(i.gabrielle_pct||0))/100;
+      return sum+cost*pct;
+    },0);
+    if(!userBilled&&sName!=='Hold from Billing'){
+      unbilled+=userShare;
+    }
+    // Earned includes all work (billed or not), excluding Hold and Archived
+    if(sName!=='Hold from Billing'){
+      const d=parseStoredDate(p.date);
+      if(d){
+        if(d>=weekStart)earnedWeek+=userShare;
+        if(d>=monthStart)earnedMonth+=userShare;
+      }
+    }
+  });
+  return{unbilled,earnedWeek,earnedMonth};
 }
 
 function myPackets(){
@@ -458,10 +573,16 @@ function getFiltered(){
 function getStats(){
   // Exclude Archived from dashboard counts
   const pkts=S.packets.filter(r=>statusShowDash(r.status_id));
-  const byStatus={'New':0,'Hold from Billing':0,'Billed':0};
+  const byStatus={'New':0,'Hold from Billing':0,'Fully Billed':0,'Part Billed':0};
   pkts.forEach(r=>{
-    const name=statusName(r.status_id);
-    if(byStatus[name]!==undefined)byStatus[name]++;
+    const pb=r.paula_billed||false;
+    const gb=r.gabby_billed||false;
+    if(pb&&gb)byStatus['Fully Billed']++;
+    else if(pb||gb)byStatus['Part Billed']++;
+    else{
+      const name=statusName(r.status_id);
+      if(byStatus[name]!==undefined)byStatus[name]++;
+    }
   });
   const retailers={};
   pkts.forEach(r=>{const n=retailerName(r.retailer_id)||'Unknown';retailers[n]=(retailers[n]||0)+1;});
@@ -558,6 +679,7 @@ const I={
   empty:'<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#B0A89F" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>',
   home:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>',
   list:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
+  calendar:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
   save:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>',
   upload:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
   inbox:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></svg>',
@@ -565,6 +687,7 @@ const I={
   alert:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>',
   check:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
   arrow:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>',
+  dollar:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>',
   refresh:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>',
 };
 function ic(n){return h('span',{htmlContent:I[n],style:{display:'inline-flex',alignItems:'center'}});}
@@ -573,28 +696,34 @@ function ic(n){return h('span',{htmlContent:I[n],style:{display:'inline-flex',al
 // NAV
 //
 function renderNav(){
-  const toggle=h('div',{className:'user-toggle'},
-    h('button',{className:'user-btn'+(S.user==='paula'?' paula':' inactive'),onClick:()=>{S.user='paula';render();}},'Paula'),
-    h('button',{className:'user-btn'+(S.user==='gabby'?' gabby':' inactive'),onClick:()=>{S.user='gabby';render();}},'Gabby'),
-  );
+  const users=S.users.length?S.users:[{name:'Gabby',slug:'gabby',colour:'#5C7A6B'},{name:'Paula',slug:'paula',colour:'#6E4B5E'}];
+  const toggle=h('div',{className:'user-toggle'});
+  users.filter(u=>u.active!==false).forEach(u=>{
+    const isActive=S.user===u.slug;
+    const btn=h('button',{className:'user-btn'+(isActive?' active':' inactive'),
+      style:isActive?{background:u.colour,color:'#fff'}:{},
+      onClick:()=>{S.user=u.slug;S.billing.selectedItemIds=new Set();render();}
+    },u.name);
+    toggle.append(btn);
+  });
+  const isReportsView=['reports','customerReport','billingRunsReport'].includes(S.view);
+  const newBtn=h('button',{className:'btn btn-gold',style:{padding:'7px 14px',fontSize:'13px'},onClick:()=>{S.view='form';render();}},ic('plus'),' New Packet');
+
   return h('nav',{className:'nav'},h('div',{className:'nav-inner'},
     h('div',{className:'nav-brand'},h('div',{className:'nav-logo'},'B'),h('span',{className:'nav-title'},'Billing Tracker')),
     h('div',{className:'nav-center'},
       h('button',{className:'nav-link'+(S.view==='home'?' active':''),onClick:()=>{S.view='home';render();}},ic('home'),' Dashboard'),
       h('button',{className:'nav-link'+(S.view==='records'?' active':''),onClick:()=>{S.view='records';render();}},ic('list'),' Records'),
-      h('button',{className:'nav-link'+(S.view==='form'?' active':''),onClick:()=>{S.view='form';render();}},ic('plus'),' New'),
       h('button',{className:'nav-link'+(S.view==='billing'?' active':''),onClick:()=>{
         S.view='billing';S.billing.step=1;
-        // Safely get New status id — fall back to empty array (show all) if not found
-        const newId=statusId('New');
-        S.billing.filters={statuses:newId?[newId]:[],dateRange:'all',dateFrom:'',dateTo:''};
-        S.billing.selectedItemIds=new Set();S.billing.retailers=[];S.billing.retailerIdx=0;
+        S.billing.filters={statuses:[],dateRange:'all',dateFrom:'',dateTo:''};
+        S.billing.selectedItemIds=new Set();S.billing.initialised=false;S.billing.retailers=[];S.billing.retailerIdx=0;
         S.billing.generatedPDFs={};S.billing.runId=null;
         render();
-      }},' Run Billing'),
-      h('button',{className:'nav-link'+(S.view==='reports'?' active':''),onClick:()=>{S.view='reports';render();}},ic('save'),' Reports'),
+      }},ic('dollar'),' Run Billing'),
+      h('button',{className:'nav-link'+(isReportsView?' active':''),onClick:()=>{S.view='reports';render();}},ic('save'),' Reports'),
     ),
-    h('div',{className:'nav-right'},toggle,
+    h('div',{className:'nav-right'},toggle,newBtn,
       h('div',{className:'nav-status'},h('span',{className:'nav-dot'+(S.online?'':' off')}),' '+(S.online?'Connected':'Offline')),
     ),
   ));
@@ -607,33 +736,29 @@ function renderHome(){
   const stats=getStats();const c=h('div',{});
   const now=new Date();const hr=now.getHours();
   const greeting=hr<12?'Good morning':hr<17?'Good afternoon':'Good evening';
-  const displayName=S.user==='paula'?'Paula':'Gabby';
+  const cu=getCurrentUser();
+  const displayName=cu.name;
+  const dollarStats=getDollarStats();
 
   c.append(h('div',{className:'dash-header fade-up'},
     h('div',{},h('h1',{className:'dash-greeting'},greeting+', '+displayName),h('p',{className:'dash-date'},fmtD(now))),
     h('button',{className:'btn btn-gold',onClick:()=>{S.view='form';render();}},ic('plus'),'New Work Packet'),
   ));
 
+  // Dollar value cards (user-specific)
   c.append(h('div',{className:'stats-row',style:{gridTemplateColumns:'repeat(3,1fr)'}},
-    h('div',{className:'stat-card c2 fade-up d1'},h('div',{className:'stat-top'},h('div',{className:'stat-icon c2',htmlContent:I.inbox})),h('div',{className:'stat-value'},String(stats.byStatus['New']||0)),h('div',{className:'stat-label'},'New')),
-    h('div',{className:'stat-card c3 fade-up d2'},h('div',{className:'stat-top'},h('div',{className:'stat-icon c3',htmlContent:I.alert})),h('div',{className:'stat-value'},String(stats.byStatus['Hold from Billing']||0)),h('div',{className:'stat-label'},'Hold from Billing')),
-    h('div',{className:'stat-card c4 fade-up d3'},h('div',{className:'stat-top'},h('div',{className:'stat-icon c4',htmlContent:I.check})),h('div',{className:'stat-value'},String(stats.byStatus['Billed']||0)),h('div',{className:'stat-label'},'Billed')),
+    h('div',{className:'stat-card c3 fade-up d1'},h('div',{className:'stat-top'},h('div',{className:'stat-icon c3',htmlContent:I.alert})),h('div',{className:'stat-value'},fmtMoney(dollarStats.unbilled)),h('div',{className:'stat-label'},'Unbilled')),
+    h('div',{className:'stat-card c2 fade-up d2'},h('div',{className:'stat-top'},h('div',{className:'stat-icon c2',htmlContent:I.calendar})),h('div',{className:'stat-value'},fmtMoney(dollarStats.earnedWeek)),h('div',{className:'stat-label'},'Earned This Week')),
+    h('div',{className:'stat-card c4 fade-up d3'},h('div',{className:'stat-top'},h('div',{className:'stat-icon c4',htmlContent:I.check})),h('div',{className:'stat-value'},fmtMoney(dollarStats.earnedMonth)),h('div',{className:'stat-label'},'Earned This Month')),
   ));
 
-  // billing pipeline placeholder
-  const bp=h('div',{className:'billing-placeholder fade-up d5'});
-  const inner=h('div',{className:'billing-inner'});
-  inner.append(
-    h('div',{className:'billing-pipeline'},
-      h('div',{className:'billing-stage s-new'},h('div',{className:'billing-stage-icon',htmlContent:I.inbox}),h('div',{className:'billing-stage-count'},String(stats.byStatus['New']||0)),h('div',{className:'billing-stage-label'},'New')),
-      h('div',{className:'billing-arrow',htmlContent:I.arrow}),
-      h('div',{className:'billing-stage s-unbilled'},h('div',{className:'billing-stage-icon',htmlContent:I.alert}),h('div',{className:'billing-stage-count'},String(stats.byStatus['Hold from Billing']||0)),h('div',{className:'billing-stage-label'},'Hold from Billing')),
-      h('div',{className:'billing-arrow',htmlContent:I.arrow}),
-      h('div',{className:'billing-stage s-billed'},h('div',{className:'billing-stage-icon',htmlContent:I.check}),h('div',{className:'billing-stage-count'},String(stats.byStatus['Billed']||0)),h('div',{className:'billing-stage-label'},'Billed')),
-    ),
-    h('p',{className:'billing-note'},'Billing pipeline -- full workflow coming soon'),
-  );
-  bp.append(inner);c.append(bp);
+  // Status count row (smaller, secondary)
+  c.append(h('div',{className:'stats-row fade-up d4',style:{gridTemplateColumns:'repeat(4,1fr)',marginTop:'-8px'}},
+    h('div',{className:'stat-card',style:{padding:'12px 16px'}},h('div',{className:'stat-value',style:{fontSize:'20px'}},String(stats.byStatus['New']||0)),h('div',{className:'stat-label'},'New')),
+    h('div',{className:'stat-card',style:{padding:'12px 16px'}},h('div',{className:'stat-value',style:{fontSize:'20px'}},String(stats.byStatus['Hold from Billing']||0)),h('div',{className:'stat-label'},'On Hold')),
+    h('div',{className:'stat-card',style:{padding:'12px 16px'}},h('div',{className:'stat-value',style:{fontSize:'20px'}},String(stats.byStatus['Part Billed']||0)),h('div',{className:'stat-label'},'Part Billed')),
+    h('div',{className:'stat-card',style:{padding:'12px 16px'}},h('div',{className:'stat-value',style:{fontSize:'20px'}},String(stats.byStatus['Fully Billed']||0)),h('div',{className:'stat-label'},'Fully Billed')),
+  ));
 
   const grid=h('div',{className:'content-grid fade-up d5'});
 
@@ -646,13 +771,13 @@ function renderHome(){
     tbl.append(h('thead',{},h('tr',{},h('th',{},'Date'),h('th',{},'Ref'),h('th',{},'Surname'),h('th',{},'Retailer'),h('th',{},'Status'),h('th',{style:{width:'36px'}}))));
     const tb=h('tbody',{});
     for(const r of last5){
-      const eb=h('button',{className:'edit-btn',title:'Edit',onClick:()=>{S.editId=r.id;S.view='edit';renderAsync();}});eb.innerHTML=I.edit;
+      const eb=h('button',{className:'edit-btn',title:'Edit',onClick:e=>{e.stopPropagation();S.editId=r.id;S.view='edit';renderAsync();}});eb.innerHTML=I.edit;
       const retName=retailerName(r.retailer_id);
-      tb.append(h('tr',{},
+      tb.append(h('tr',{style:{cursor:'pointer'},onClick:()=>{S.editId=r.id;S.view='edit';renderAsync();}},
         h('td',{className:'mono'},r.date),h('td',{className:'mono'},r.customer_ref),
         h('td',{className:'name-cell'},r.surname),
         h('td',{},h('span',{className:retName==='Alexandra'?'badge badge-plum':'badge badge-ember'},retName)),
-        (()=>{const sn=statusName(r.status_id);return h('td',{},h('span',{className:'badge',style:statusBadgeStyle(sn)},sn));})(),
+        (()=>{const bl=packetBillingLabel(r);const sn=bl||statusName(r.status_id);return h('td',{},h('span',{className:'badge',style:statusBadgeStyle(sn)},sn));})(),
         h('td',{},eb),
       ));
     }
@@ -667,18 +792,34 @@ function renderHome(){
   const qaBody=h('div',{className:'qa-list'});
   qaBody.append(
     h('button',{className:'qa-btn',onClick:()=>{S.view='records';render();}},h('div',{className:'qa-icon sage',htmlContent:I.search}),h('div',{className:'qa-text'},h('span',{className:'qa-label'},'Search Records'),h('span',{className:'qa-hint'},'Find by ref, date or name'))),
-    h('button',{className:'qa-btn',onClick:downloadCSV},h('div',{className:'qa-icon plum',htmlContent:I.download}),h('div',{className:'qa-text'},h('span',{className:'qa-label'},'Export CSV'),h('span',{className:'qa-hint'},'Download for invoicing'))),
+    h('button',{className:'qa-btn',onClick:()=>{
+      S.view='billing';S.billing.step=1;
+      S.billing.filters={statuses:[],dateRange:'all',dateFrom:'',dateTo:''};
+      S.billing.selectedItemIds=new Set();S.billing.initialised=false;
+      S.billing.retailers=[];S.billing.retailerIdx=0;
+      S.billing.generatedPDFs={};S.billing.runId=null;
+      render();
+    }},h('div',{className:'qa-icon plum',htmlContent:I.dollar}),h('div',{className:'qa-text'},h('span',{className:'qa-label'},'Run Billing'),h('span',{className:'qa-hint'},'Generate invoices and PDFs'))),
   );
   qa.append(qaBody);sidebar.append(qa);
 
-  // retailer breakdown
-  if(Object.keys(stats.retailers).length){
+  // Retailer breakdown - this month only
+  const now2=new Date();
+  const monthStart2=new Date(now2.getFullYear(),now2.getMonth(),1);
+  const thisMonthPkts=S.packets.filter(p=>{
+    if(!statusShowDash(p.status_id))return false;
+    const d=parseStoredDate(p.date);
+    return d&&d>=monthStart2;
+  });
+  const retailersThisMonth={};
+  thisMonthPkts.forEach(r=>{const n=retailerName(r.retailer_id)||'Unknown';retailersThisMonth[n]=(retailersThisMonth[n]||0)+1;});
+  if(Object.keys(retailersThisMonth).length){
     const rb=h('div',{className:'panel'});
-    rb.append(h('div',{className:'panel-header'},h('span',{className:'panel-title'},'By Retailer')));
+    rb.append(h('div',{className:'panel-header'},h('span',{className:'panel-title'},'By Retailer'),h('span',{style:{fontSize:'12px',color:'var(--text-muted)'}},'this month')));
     const rbBody=h('div',{style:{padding:'18px 22px',display:'flex',flexDirection:'column',gap:'14px'}});
-    const max=Math.max(...Object.values(stats.retailers));
+    const max=Math.max(...Object.values(retailersThisMonth));
     const colors={Alexandra:'plum',Queenstown:'ember'};
-    for(const[name,count]of Object.entries(stats.retailers).sort((a,b)=>b[1]-a[1])){
+    for(const[name,count]of Object.entries(retailersThisMonth).sort((a,b)=>b[1]-a[1])){
       const pct=Math.round((count/max)*100);const cl=colors[name]||'plum';
       rbBody.append(h('div',{style:{display:'flex',alignItems:'center',gap:'12px'}},
         h('span',{style:{fontSize:'13.5px',fontWeight:'500',flex:'1',color:'var(--deep)'}},name),
@@ -847,10 +988,11 @@ function renderRecords(){
     const cv=f.user==='paula'?costs.paula:f.user==='gabby'?costs.gabby:costs.total;
     const cb=h('input',{type:'checkbox'});cb.checked=S.selectedPacketIds.has(r.id);
     cb.addEventListener('change',()=>{S.selectedPacketIds[cb.checked?'add':'delete'](r.id);render();});
-    const eb=h('button',{className:'edit-btn',title:'Edit',onClick:()=>{S.editId=r.id;S.view='edit';renderAsync();}});eb.innerHTML=I.edit;
+    cb.addEventListener('click',e=>e.stopPropagation());
+    const eb=h('button',{className:'edit-btn',title:'Edit',onClick:e=>{e.stopPropagation();S.editId=r.id;S.view='edit';renderAsync();}});eb.innerHTML=I.edit;
     const retName=retailerName(r.retailer_id);
-    const sn=statusName(r.status_id);
-    tb.append(h('tr',{style:{background:S.selectedPacketIds.has(r.id)?'var(--gold-light)':''}},
+    const bl=packetBillingLabel(r);const sn=bl||statusName(r.status_id);
+    tb.append(h('tr',{style:{background:S.selectedPacketIds.has(r.id)?'var(--gold-light)':'',cursor:'pointer'},onClick:()=>{S.editId=r.id;S.view='edit';renderAsync();}},
       h('td',{style:{paddingLeft:'14px'}},cb),
       h('td',{className:'mono'},r.date),h('td',{className:'mono'},r.customer_ref),
       h('td',{className:'name-cell'},r.surname),
@@ -923,8 +1065,8 @@ function renderForm(packet){
           item:row.item||S.items[0]?.name||'',
           jobTypeId:S.jobTypes[0]?.id||null,
           cost:parseFloat(row.cost)||60,
-          paulaPct:row.paula_pct||0,
-          gabriellePct:row.gabrielle_pct||100,
+          paulaPct:row.paula_pct!=null?row.paula_pct:0,
+          gabriellePct:row.gabrielle_pct!=null?row.gabrielle_pct:100,
           _warning:'Job type not found in lookup (id:'+row.job_type_id+')',
         });
       } else {
@@ -933,8 +1075,8 @@ function renderForm(packet){
           item:row.item||S.items[0]?.name||'',
           jobTypeId:row.job_type_id,
           cost:parseFloat(row.cost)||jt.cost,
-          paulaPct:row.paula_pct||0,
-          gabriellePct:row.gabrielle_pct||100,
+          paulaPct:row.paula_pct!=null?row.paula_pct:0,
+          gabriellePct:row.gabrielle_pct!=null?row.gabrielle_pct:100,
         });
       }
     });
@@ -1001,6 +1143,107 @@ function renderForm(packet){
   surFld.append(surIn,surErr);headerGrid.append(surFld);
 
   headerSection.append(headerGrid);
+
+  // -- BILLING STATUS CARD (edit mode only, above Packet Details) --
+  if(isEdit&&packet){
+    const pBilled=packet.paula_billed||false;
+    const gBilled=packet.gabby_billed||false;
+    const curStatusName=statusName(packet.status_id);
+    const isHold=curStatusName==='Hold from Billing';
+    const isArchived=curStatusName==='Archived';
+    const billingDisabled=isHold||isArchived;
+
+    const billingCard=h('div',{className:'billing-status-card'});
+
+    // Card title + fully billed warning inline
+    const cardTitle=h('div',{className:'billing-status-card-title'});
+    cardTitle.append(document.createTextNode('Billing Status'));
+    if(pBilled&&gBilled){
+      const warn=h('span',{style:{fontSize:'12px',color:'var(--ember)',fontWeight:'500',fontFamily:'var(--font-body)'}});
+      warn.textContent='(!) Both users billed - changes may affect completed invoices';
+      cardTitle.append(warn);
+    }
+    billingCard.append(cardTitle);
+
+    // -- Workflow lozenges: New / Hold from Billing / Archived --
+    billingCard.append(h('div',{className:'billing-section-label'},'Workflow'));
+    const lozengeRow=h('div',{className:'status-lozenges'});
+
+    const lozengeConfig=[
+      {name:'New',cls:'active-new',disabled:false},
+      {name:'Hold from Billing',cls:'active-hold',disabled:pBilled||gBilled},
+      {name:'Archived',cls:'active-archived',disabled:false},
+    ];
+    lozengeConfig.forEach(({name,cls,disabled})=>{
+      const isActive=curStatusName===name;
+      const loz=h('button',{className:'status-lozenge'+(isActive?' '+cls:'')});
+      loz.textContent=name==='Hold from Billing'?'Hold':name;
+      loz.title=name;
+      if(disabled&&!isActive)loz.disabled=true;
+      loz.addEventListener('click',async()=>{
+        if(isActive)return; // already selected
+        const newStatusId=statusId(name);
+        const updateData={status_id:newStatusId,modified:fmtD(new Date())};
+        // Clicking New resets both billed flags
+        if(name==='New'){updateData.paula_billed=false;updateData.gabby_billed=false;}
+        try{
+          await sbUpdate('packets',packet.id,updateData);
+          await loadAll();S.editId=packet.id;S.view='edit';renderAsync();
+        }catch(e2){showToast('Failed: '+e2.message,true);}
+      });
+      lozengeRow.append(loz);
+    });
+    billingCard.append(lozengeRow);
+
+    // -- Per-user billing toggles --
+    billingCard.append(h('div',{className:'billing-section-label',style:{marginTop:'12px'}},'Billed by'));
+    const usersRow=h('div',{className:'billing-users-row'});
+    [{label:'Paula',billedKey:'paula_billed',otherKey:'gabby_billed',otherPctField:'paula_pct'},{label:'Gabby',billedKey:'gabby_billed',otherKey:'paula_billed',otherPctField:'gabrielle_pct'}].forEach(({label,billedKey,otherKey,otherPctField})=>{
+      const isBilled=packet[billedKey]||false;
+      const btn=h('button',{className:'billing-flag-btn '+(isBilled?'billed':'unbilled')});
+      btn.textContent=label+': '+(isBilled?'Billed':'Unbilled');
+      if(billingDisabled)btn.disabled=true;
+      btn.addEventListener('click',async()=>{
+        const newVal=!isBilled;
+        const updateData={[billedKey]:newVal,modified:fmtD(new Date())};
+        if(!newVal){
+          // Reverting to unbilled - reset status to New
+          updateData.status_id=statusId('New');
+        } else {
+          // Marking as billed - check if other user also done
+          const otherBilled=packet[otherKey]||false;
+          const otherNoWork=S.allPacketItems.filter(i=>i.packet_id===packet.id)
+            .every(i=>(i[otherPctField]||0)===0);
+          if(otherBilled||otherNoWork)updateData.status_id=statusId('Billed');
+        }
+        try{
+          await sbUpdate('packets',packet.id,updateData);
+          await loadAll();S.editId=packet.id;S.view='edit';renderAsync();
+        }catch(e2){showToast('Failed: '+e2.message,true);}
+      });
+      usersRow.append(btn);
+    });
+    billingCard.append(usersRow);
+
+    // -- Delete packet button --
+    const delBtn=h('button',{className:'delete-packet-btn',style:{marginTop:'16px',display:'block'},onClick:async()=>{
+      if(!confirm('Delete this packet and all its items? This cannot be undone.'))return;
+      try{
+        // Delete packet_items first, then packet
+        const existingItems=await sbAll('packet_items','&packet_id=eq.'+packet.id)||[];
+        for(const ei of existingItems)await sbDelete('packet_items',ei.id);
+        await sbDelete('packets',packet.id);
+        await loadAll();
+        S.view='records';S.editId=null;
+        toast('Packet deleted');
+      }catch(e2){showToast('Delete failed: '+e2.message,true);}
+    }},'Delete this packet');
+    billingCard.append(delBtn);
+
+    // Insert billing card before packet details
+    wrap.append(billingCard);
+  }
+
   wrap.append(headerSection);
 
   // -- ITEMS SECTION --
@@ -1014,8 +1257,14 @@ function renderForm(packet){
     // Card header
     const cardHdr=h('div',{className:'item-card-header'});
     cardHdr.append(h('span',{className:'item-card-num'},'Item '+(index+1)));
-    if(formItems.length>1){
-      const rmBtn=h('button',{className:'item-card-remove',title:'Remove item',onClick:()=>{
+    // Always show remove button in edit mode; in new mode only when >1 item
+    if(isEdit||formItems.length>1){
+      const rmBtn=h('button',{className:'item-card-remove',title:'Remove item',onClick:async()=>{
+        if(isEdit&&item.id&&!item.id.startsWith('new_')){
+          // Delete from DB immediately
+          try{await sbDelete('packet_items',item.id);}
+          catch(e2){showToast('Delete failed: '+e2.message,true);return;}
+        }
         formItems.splice(index,1);
         rebuildItemsStack();
       }});rmBtn.innerHTML=I.trash;cardHdr.append(rmBtn);
@@ -1144,8 +1393,18 @@ function renderForm(packet){
 
   const splitBtnWrap=h('div',{className:'split-btn-wrap'},saveBtn,arrowBtn,dropdown);
 
+  // Status badge for edit mode
+  const titleRow=h('div',{style:{display:'flex',alignItems:'center',gap:'12px'}});
+  titleRow.append(h('span',{className:'form-sticky-title'},isEditTitle));
+  if(isEdit&&packet){
+    const bl=packetBillingLabel(packet);
+    const sn=bl||statusName(packet.status_id);
+    const badge=h('span',{className:'badge',style:statusBadgeStyle(sn)},sn);
+    titleRow.append(badge);
+  }
+
   const stickyHdr=h('div',{className:'form-sticky-header'},
-    h('span',{className:'form-sticky-title'},isEditTitle),
+    titleRow,
     h('div',{className:'form-sticky-actions'},
       h('button',{className:'btn btn-secondary',onClick:()=>{S.view='home';S.editId=null;render();}},'Cancel'),
       splitBtnWrap,
@@ -1226,16 +1485,32 @@ function renderForm(packet){
 // Get all packet_items matching current billing filters + checked selection
 function getBillingItems(){
   const f=S.billing.filters;
-  console.log('getBillingItems: allPacketItems count=',S.allPacketItems.length,'packets=',S.packets.length,'filters=',f);
-  // Filter packets by status and date
-  let pkts=S.packets;
+  const user=S.user;
+  // Filter packets: current user not yet billed, not Hold/Archived, date range
+  let pkts=S.packets.filter(p=>{
+    // Exclude Hold from Billing and Archived
+    const sName=statusName(p.status_id);
+    if(sName==='Hold from Billing'||sName==='Archived')return false;
+    // Exclude if current user has already billed this packet
+    if(user==='paula'&&(p.paula_billed||false))return false;
+    if(user==='gabby'&&(p.gabby_billed||false))return false;
+    return true;
+  });
+  // Apply any additional status filter from UI
   if(f.statuses.length)pkts=pkts.filter(p=>f.statuses.includes(p.status_id));
+  // Date range
   let dr=null;
   if(f.dateRange!=='all'&&f.dateRange!=='custom')dr=getDateRange(f.dateRange);
   else if(f.dateRange==='custom'&&f.dateFrom&&f.dateTo)dr={from:new Date(f.dateFrom),to:new Date(f.dateTo+'T23:59:59')};
   if(dr)pkts=pkts.filter(p=>{const d=parseStoredDate(p.date);return d&&d>=dr.from&&d<=dr.to;});
+  // Get packet_items for filtered packets, excluding items where user has 0%
   const pktIds=new Set(pkts.map(p=>p.id));
-  return S.allPacketItems.filter(i=>pktIds.has(i.packet_id));
+  return S.allPacketItems.filter(i=>{
+    if(!pktIds.has(i.packet_id))return false;
+    // Exclude if this user has 0% on this item
+    const pct=user==='paula'?(i.paula_pct||0):(i.gabrielle_pct||0);
+    return pct>0;
+  });
 }
 
 function buildInvoiceSummary(items,retailerId){
@@ -1331,9 +1606,11 @@ function renderBillingStep1(){
   const allItems=getBillingItems();
   const user=S.user;
 
-  // Auto-select all on first load — must happen before table renders
-  if(allItems.length&&b.selectedItemIds.size===0){
+  // Auto-select all items on first load only
+  // Use initialised flag so unchecking all doesn't re-trigger auto-select
+  if(allItems.length&&!b.initialised){
     allItems.forEach(i=>b.selectedItemIds.add(i.id));
+    b.initialised=true;
   }
 
   // selCount declared here so it's in scope for the footer
@@ -1366,7 +1643,7 @@ function renderBillingStep1(){
       const cb=h('input',{type:'checkbox'});
       cb.checked=b.selectedItemIds.has(i.id);
       cb.addEventListener('change',()=>{b.selectedItemIds[cb.checked?'add':'delete'](i.id);render();});
-      tb.append(h('tr',{style:{background:b.selectedItemIds.has(i.id)?'':'var(--bg-warm)'}},
+      tb.append(h('tr',{style:{background:b.selectedItemIds.has(i.id)?'var(--gold-light)':''}},
         h('td',{style:{paddingLeft:'14px'}},cb),
         h('td',{className:'mono'},pkt.date||''),
         h('td',{className:'mono'},pkt.customer_ref||''),
@@ -1461,10 +1738,15 @@ function renderBillingStep2(){
   Object.entries(summary.byJobType).forEach(([name,amt])=>{
     stb.append(h('tr',{},h('td',{},name),h('td',{className:'right'},fmtMoney(amt))));
   });
+  const cu2=getCurrentUser();
+  const gstRows=[];
+  if(cu2.gst_registered){
+    gstRows.push(h('tr',{},h('td',{style:{color:'var(--text-muted)'}},'GST ('+cu2.gst_rate+'%)'),h('td',{className:'right',style:{color:'var(--text-muted)'}},fmtMoney(summary.subtotal*(cu2.gst_rate/100)))));
+  }
   stb.append(
     h('tr',{className:'total-row'},h('td',{},'Subtotal'),h('td',{className:'right'},fmtMoney(summary.subtotal))),
-    h('tr',{},h('td',{style:{color:'var(--text-muted)'}},'GST (15%)'),h('td',{className:'right',style:{color:'var(--text-muted)'}},fmtMoney(summary.gst))),
-    h('tr',{className:'total-row'},h('td',{},'Total'),h('td',{className:'right'},fmtMoney(summary.total))),
+    ...gstRows,
+    h('tr',{className:'total-row'},h('td',{},'Total'),h('td',{className:'right'},fmtMoney(cu2.gst_registered?summary.subtotal*(1+cu2.gst_rate/100):summary.subtotal))),
   );
   sumTbl.append(stb);body.append(sumTbl);
   modal.append(body);
@@ -1496,7 +1778,7 @@ function renderBillingStep2(){
 function generatePDFContent(retailerId){
   const b=S.billing;const user=S.user;
   const retName=retailerName(retailerId);
-  const displayName=user==='paula'?'Paula':'Gabby';
+  const displayName=getCurrentUser().name;
   const myItems=S.allPacketItems.filter(i=>b.selectedItemIds.has(i.id)&&(S.packets.find(p=>p.id===i.packet_id)||{}).retailer_id===retailerId);
   const summary=buildInvoiceSummary(myItems,retailerId);
   const now=new Date();
@@ -1533,8 +1815,13 @@ function generatePDFContent(retailerId){
   });
   lines.push('-'.repeat(40));
   lines.push('Subtotal'.padEnd(30)+fmtMoney(summary.subtotal).padStart(10));
-  lines.push('GST (15%)'.padEnd(30)+fmtMoney(summary.gst).padStart(10));
-  lines.push('TOTAL'.padEnd(30)+fmtMoney(summary.total).padStart(10));
+  const cu3=getCurrentUser();
+  if(cu3.gst_registered){
+    const gstAmt=summary.subtotal*(cu3.gst_rate/100);
+    lines.push(('GST ('+cu3.gst_rate+'%)').padEnd(30)+fmtMoney(gstAmt).padStart(10));
+  }
+  const cu4=getCurrentUser();const totalAmt=cu4.gst_registered?summary.subtotal*(1+cu4.gst_rate/100):summary.subtotal;
+  lines.push('TOTAL'.padEnd(30)+fmtMoney(totalAmt).padStart(10));
   lines.push('');
   lines.push('Total items: '+myItems.length);
   return lines.join('\n');
@@ -1645,10 +1932,18 @@ function renderBillingStep4(){
   const confirmBtn=h('button',{className:'btn btn-gold',onClick:async()=>{
     confirmBtn.disabled=true;confirmBtn.textContent='Updating...';
     try{
-      const billedId=statusId('Billed');
       const now=fmtD(new Date());
+      const billedCol=user==='paula'?'paula_billed':'gabby_billed';
+      const billedStatusId=statusId('Billed');
       for(const pid of pktIds){
-        await sbUpdate('packets',pid,{status_id:billedId,modified:now});
+        const pkt=S.packets.find(p=>p.id===pid)||{};
+        const otherBilled=user==='paula'?(pkt.gabby_billed||false):(pkt.paula_billed||false);
+        const otherHasNoWork=user==='paula'
+          ?S.allPacketItems.filter(i=>i.packet_id===pid).every(i=>(i.gabrielle_pct||0)===0)
+          :S.allPacketItems.filter(i=>i.packet_id===pid).every(i=>(i.paula_pct||0)===0);
+        const updateData={[billedCol]:true,modified:now};
+        if(otherBilled||otherHasNoWork){updateData.status_id=billedStatusId;}
+        await sbUpdate('packets',pid,updateData);
       }
       // Save billing run record
       const runId=gid();
@@ -1660,7 +1955,7 @@ function renderBillingStep4(){
       });
       await loadAll();
       b.step=0;S.view='reports';
-      toast('Billing complete -- '+pktIds.size+' packets marked as Billed');
+      toast('Billing complete -- '+pktIds.size+' packets marked as Billed for '+(user==='paula'?'Paula':'Gabby'));
     }catch(e){showToast('Error: '+e.message,true);confirmBtn.disabled=false;confirmBtn.textContent='Confirm + Mark as Billed';}
   }},'Confirm + Mark as Billed');
 
@@ -1680,10 +1975,62 @@ function renderBillingStep4(){
 // =============================================================================
 // REPORTS
 // =============================================================================
+
+// Breadcrumb helper
+function renderBreadcrumb(section){
+  const bc=h('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'20px',fontSize:'13px'}});
+  const back=h('button',{style:{background:'none',border:'none',cursor:'pointer',color:'var(--gold)',fontWeight:'600',fontSize:'13px',padding:'0',fontFamily:'var(--font-body)'},onClick:()=>{S.view='reports';render();}},'Reports');
+  bc.append(back,h('span',{style:{color:'var(--text-muted)'}},'>'),h('span',{style:{color:'var(--text-sec)',fontWeight:'500'}},section));
+  return bc;
+}
+
 function renderReports(){
+  // If navigated to customerReport sub-view, render that
+  if(S.view==='customerReport')return renderCustomerReportPage();
+
   const c=h('div',{});
   c.append(h('div',{className:'dash-header'},
-    h('div',{},h('h1',{className:'dash-greeting',style:{fontSize:'24px'}},'Reports'),h('p',{className:'dash-date'},S.billingRuns.length+' billing run'+(S.billingRuns.length!==1?'s':''))),
+    h('div',{},h('h1',{className:'dash-greeting',style:{fontSize:'24px'}},'Reports')),
+  ));
+
+  // Report type cards
+  const grid=h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'20px',maxWidth:'700px'}});
+
+  // Billing Runs card
+  const brCard=h('div',{className:'panel',style:{cursor:'pointer',transition:'box-shadow .2s,transform .15s'},
+    onClick:()=>{S.view='billingRunsReport';render();}});
+  brCard.addEventListener('mouseenter',()=>{brCard.style.boxShadow='var(--shadow-md)';brCard.style.transform='translateY(-2px)';});
+  brCard.addEventListener('mouseleave',()=>{brCard.style.boxShadow='';brCard.style.transform='';});
+  const brBody=h('div',{style:{padding:'28px 24px'}});
+  brBody.append(
+    h('div',{style:{width:'44px',height:'44px',background:'var(--gold-light)',borderRadius:'12px',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'16px',color:'var(--gold)'},htmlContent:I.save}),
+    h('h3',{style:{fontFamily:'var(--font-display)',fontSize:'17px',fontWeight:'600',color:'var(--deep)',marginBottom:'8px'}},'Billing Runs'),
+    h('p',{style:{fontSize:'13px',color:'var(--text-muted)',lineHeight:'1.5'}},'History of billing runs. Regenerate or download PDFs for any past run.'),
+    h('p',{style:{fontSize:'12px',color:'var(--text-muted)',marginTop:'12px'}},'Runs this period: '+S.billingRuns.length),
+  );
+  brCard.append(brBody);grid.append(brCard);
+
+  // Customer Report card
+  const crCard=h('div',{className:'panel',style:{cursor:'pointer',transition:'box-shadow .2s,transform .15s'},
+    onClick:()=>{S.view='customerReport';render();}});
+  crCard.addEventListener('mouseenter',()=>{crCard.style.boxShadow='var(--shadow-md)';crCard.style.transform='translateY(-2px)';});
+  crCard.addEventListener('mouseleave',()=>{crCard.style.boxShadow='';crCard.style.transform='';});
+  const crBody=h('div',{style:{padding:'28px 24px'}});
+  crBody.append(
+    h('div',{style:{width:'44px',height:'44px',background:'var(--sky-light)',borderRadius:'12px',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'16px',color:'var(--sky)'},htmlContent:I.list}),
+    h('h3',{style:{fontFamily:'var(--font-display)',fontSize:'17px',fontWeight:'600',color:'var(--deep)',marginBottom:'8px'}},'Customer Report'),
+    h('p',{style:{fontSize:'13px',color:'var(--text-muted)',lineHeight:'1.5'}},'Total cost by customer across both users. Filter by retailer and date range.'),
+  );
+  crCard.append(crBody);grid.append(crCard);
+  c.append(grid);
+  return c;
+}
+
+function renderBillingRunsReport(){
+  const c=h('div',{});
+  c.append(renderBreadcrumb('Billing Runs'));
+  c.append(h('div',{className:'dash-header'},
+    h('div',{},h('h1',{className:'dash-greeting',style:{fontSize:'24px'}},'Billing Runs'),h('p',{className:'dash-date'},S.billingRuns.length+' billing run'+(S.billingRuns.length!==1?'s':''))),
   ));
 
   if(!S.billingRuns.length){
@@ -1702,9 +2049,7 @@ function renderReports(){
     const retNames=run.retailer_ids.split(',').map(id=>retailerName(parseInt(id))).join(', ');
     const pktCount=run.packet_ids?run.packet_ids.split(',').length:0;
 
-    // Regenerate button
     const regenBtn=h('button',{className:'btn-small',style:{fontSize:'12px'},onClick:()=>{
-      // Restore run state and go to step 3 for PDF regeneration
       S.billing.selectedItemIds=new Set();
       const pktIds=run.packet_ids.split(',');
       S.allPacketItems.filter(i=>pktIds.includes(i.packet_id)).forEach(i=>S.billing.selectedItemIds.add(i.id));
@@ -1716,7 +2061,6 @@ function renderReports(){
       render();
     }},ic('refresh'),' Regenerate PDFs');
 
-    // Delete button
     const delBtn=h('button',{className:'edit-btn',title:'Delete run',onClick:async()=>{
       if(!confirm('Delete this billing run record?'))return;
       try{await sbDelete('billing_runs',run.id);await loadAll();render();}
@@ -1735,6 +2079,230 @@ function renderReports(){
   return c;
 }
 
+
+// =============================================================================
+// CUSTOMER REPORT
+// =============================================================================
+function renderCustomerReportPage(){
+  const c=h('div',{});
+  const cr=S.customerReport;
+
+  // Breadcrumb + page header
+  c.append(renderBreadcrumb('Customer Report'));
+  c.append(h('div',{className:'dash-header'},
+    h('div',{},
+      h('h1',{className:'dash-greeting',style:{fontSize:'24px'}},'Customer Report'),
+      h('p',{className:'dash-date'},'Total cost by customer across both users'),
+    ),
+  ));
+
+  // Filter bar
+  const fb=h('div',{style:{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'var(--radius-lg)',padding:'16px 20px',marginBottom:'16px',display:'flex',flexWrap:'wrap',gap:'16px',alignItems:'flex-end'}});
+
+  // Date range pills
+  const drWrap=h('div',{style:{display:'flex',flexDirection:'column',gap:'6px'}});
+  drWrap.append(h('label',{className:'field-label',style:{marginBottom:'0'}},'Date Range'));
+  const drPills=h('div',{style:{display:'flex',flexWrap:'wrap',gap:'5px'}});
+  [['month','This Month'],['lastmonth','Last Month'],['thisfy','This FY'],['lastfy','Last FY'],['custom','Custom']].forEach(([v,l])=>{
+    const on=cr.dateRange===v;
+    const p=h('button',{style:{padding:'5px 10px',borderRadius:'20px',border:'1px solid',fontSize:'12px',fontWeight:'600',cursor:'pointer',fontFamily:'var(--font-body)',
+      borderColor:on?'var(--gold)':'var(--border)',background:on?'var(--gold-light)':'var(--surface)',color:on?'var(--gold-dark)':'var(--text-muted)'}},l);
+    p.addEventListener('click',()=>{cr.dateRange=v;render();});
+    drPills.append(p);
+  });
+  drWrap.append(drPills);
+  if(cr.dateRange==='custom'){
+    const row=h('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginTop:'6px'}});
+    const fi=h('input',{type:'date',className:'input',style:{flex:'1'},value:cr.dateFrom});
+    const ti=h('input',{type:'date',className:'input',style:{flex:'1'},value:cr.dateTo});
+    fi.addEventListener('input',e=>{cr.dateFrom=e.target.value;render();});
+    ti.addEventListener('input',e=>{cr.dateTo=e.target.value;render();});
+    row.append(fi,h('span',{style:{color:'var(--text-muted)',fontSize:'13px'}},'to'),ti);
+    drWrap.append(row);
+  }
+  fb.append(drWrap);
+
+  // Retailer filter
+  const retSel=h('select',{className:'select-input',style:{minWidth:'160px'}});
+  retSel.append(h('option',{value:''},'All Retailers'));
+  S.retailers.forEach(r=>{
+    const o=h('option',{value:String(r.id)},r.name);
+    if(cr.retailerId===r.id)o.selected=true;
+    retSel.append(o);
+  });
+  retSel.addEventListener('change',e=>{cr.retailerId=e.target.value?parseInt(e.target.value):null;render();});
+  fb.append(h('div',{style:{display:'flex',flexDirection:'column',gap:'6px'}},h('label',{className:'field-label',style:{marginBottom:'0'}},'Retailer'),retSel));
+
+  // Download PDF button
+  const dlBtn=h('button',{className:'btn btn-primary',style:{alignSelf:'flex-end'},onClick:()=>downloadCustomerReportPDF(filteredPackets,cr)},ic('download'),'Download PDF');
+  fb.append(dlBtn);
+  c.append(fb);
+
+  // Filter packets by date range
+  let dr=null;
+  if(cr.dateRange!=='custom')dr=getDateRange(cr.dateRange);
+  else if(cr.dateFrom&&cr.dateTo)dr={from:new Date(cr.dateFrom),to:new Date(cr.dateTo+'T23:59:59')};
+
+  let filteredPackets=S.packets.filter(p=>{
+    if(cr.retailerId&&p.retailer_id!==cr.retailerId)return false;
+    if(dr){const d=parseStoredDate(p.date);if(!d||d<dr.from||d>dr.to)return false;}
+    return true;
+  });
+  // Sort by retailer then customer ref
+  filteredPackets.sort((a,b)=>{
+    if(a.retailer_id!==b.retailer_id)return a.retailer_id-b.retailer_id;
+    return (a.customer_ref||'').localeCompare(b.customer_ref||'');
+  });
+
+  if(!filteredPackets.length){
+    c.append(h('div',{style:{textAlign:'center',padding:'48px',color:'var(--text-muted)',fontSize:'14px'}},'No packets match the selected filters.'));
+    return c;
+  }
+
+  // Group by retailer
+  const byRetailer={};
+  filteredPackets.forEach(p=>{
+    const rid=p.retailer_id;
+    if(!byRetailer[rid])byRetailer[rid]=[];
+    byRetailer[rid].push(p);
+  });
+
+  Object.entries(byRetailer).forEach(([rid,pkts])=>{
+    const retName=retailerName(parseInt(rid));
+    const section=h('div',{className:'panel',style:{marginBottom:'20px'}});
+
+    // Retailer header
+    section.append(h('div',{className:'panel-header'},
+      h('span',{className:'panel-title'},retName),
+      h('span',{style:{fontSize:'13px',color:'var(--text-muted)'}},pkts.length+' packet'+(pkts.length!==1?'s':'')),
+    ));
+
+    // Items table
+    const tbl=h('table',{className:'summary-table'});
+    tbl.append(h('thead',{},h('tr',{},
+      h('th',{},'Ref'),h('th',{},'Surname'),h('th',{},'Item'),h('th',{},'Job Type'),h('th',{className:'right'},'Cost'),
+    )));
+    const tb=h('tbody',{});
+
+    let retailerTotal=0;let retailerItemCount=0;
+    pkts.forEach(pkt=>{
+      const items=S.allPacketItems.filter(i=>i.packet_id===pkt.id);
+      items.forEach((item,idx)=>{
+        const jt=S.jobTypes.find(j=>j.id===item.job_type_id)||{};
+        const cost=parseFloat(item.cost)||0;
+        retailerTotal+=cost;retailerItemCount++;
+        tb.append(h('tr',{},
+          h('td',{className:'mono',style:{fontSize:'12px'}},idx===0?pkt.customer_ref:''),
+          h('td',{},idx===0?pkt.surname:''),
+          h('td',{},item.item||''),
+          h('td',{},jt.name||''),
+          h('td',{className:'right'},fmtMoney(cost)),
+        ));
+      });
+      if(!items.length){
+        tb.append(h('tr',{},
+          h('td',{className:'mono',style:{fontSize:'12px'}},pkt.customer_ref),
+          h('td',{},pkt.surname),
+          h('td',{colspan:'3',style:{color:'var(--text-muted)',fontSize:'12px'}},'No items'),
+        ));
+      }
+    });
+
+    // Totals row
+    tb.append(h('tr',{className:'total-row'},
+      h('td',{colspan:'4'},'Total items: '+retailerItemCount),
+      h('td',{className:'right'},fmtMoney(retailerTotal)),
+    ));
+
+    tbl.append(tb);section.append(tbl);c.append(section);
+  });
+
+  return c;
+}
+
+function downloadCustomerReportPDF(filteredPackets,cr){
+  if(!filteredPackets||!filteredPackets.length){showToast('No data to export',true);return;}
+  const doc=new window.jspdf.jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+  const now=new Date();
+  let y=15;
+
+  // Helper to add page if needed
+  const checkPage=()=>{if(y>270){doc.addPage();y=15;}};
+
+  // Title
+  doc.setFontSize(14);doc.setFont('helvetica','bold');
+  doc.text('Customer Report',10,y);y+=7;
+  doc.setFontSize(10);doc.setFont('helvetica','normal');
+  doc.text('Generated: '+fmtD(now),10,y);y+=5;
+  if(cr.dateRange!=='custom'){
+    const dr=getDateRange(cr.dateRange);
+    if(dr)doc.text('Period: '+fmtD(dr.from)+' to '+fmtD(dr.to),10,y);
+  } else if(cr.dateFrom&&cr.dateTo){
+    doc.text('Period: '+cr.dateFrom+' to '+cr.dateTo,10,y);
+  }
+  y+=8;
+
+  // Group by retailer
+  const byRetailer={};
+  filteredPackets.forEach(p=>{
+    const rid=p.retailer_id;
+    if(!byRetailer[rid])byRetailer[rid]=[];
+    byRetailer[rid].push(p);
+  });
+
+  Object.entries(byRetailer).forEach(([rid,pkts])=>{
+    checkPage();
+    const retName=retailerName(parseInt(rid));
+    doc.setFontSize(12);doc.setFont('helvetica','bold');
+    doc.text(retName,10,y);y+=2;
+    doc.setLineWidth(0.3);doc.line(10,y,200,y);y+=5;
+
+    // Column headers
+    doc.setFontSize(9);doc.setFont('helvetica','bold');
+    doc.text('Ref',10,y);doc.text('Surname',40,y);doc.text('Item',80,y);doc.text('Job Type',120,y);doc.text('Cost',185,y);
+    y+=4;doc.line(10,y,200,y);y+=4;
+
+    let retailerTotal=0;let retailerItemCount=0;
+    pkts.forEach(pkt=>{
+      const items=S.allPacketItems.filter(i=>i.packet_id===pkt.id);
+      items.forEach((item,idx)=>{
+        checkPage();
+        const jt=S.jobTypes.find(j=>j.id===item.job_type_id)||{};
+        const cost=parseFloat(item.cost)||0;
+        retailerTotal+=cost;retailerItemCount++;
+        doc.setFontSize(9);doc.setFont('courier','normal');
+        doc.text(idx===0?(pkt.customer_ref||''):'',10,y);
+        doc.setFont('helvetica','normal');
+        doc.text(idx===0?(pkt.surname||''):'',40,y);
+        doc.text((item.item||'').substring(0,18),80,y);
+        doc.text((jt.name||'').substring(0,20),120,y);
+        doc.text(fmtMoney(cost),185,y,{align:'right'});
+        y+=5;
+      });
+      if(!items.length){
+        checkPage();
+        doc.setFontSize(9);doc.setFont('courier','normal');
+        doc.text(pkt.customer_ref||'',10,y);
+        doc.setFont('helvetica','normal');
+        doc.text(pkt.surname||'',40,y);
+        doc.text('No items',80,y);
+        y+=5;
+      }
+    });
+
+    // Retailer totals
+    checkPage();
+    doc.line(10,y,200,y);y+=4;
+    doc.setFontSize(10);doc.setFont('helvetica','bold');
+    doc.text('Total items: '+retailerItemCount,10,y);
+    doc.text(fmtMoney(retailerTotal),185,y,{align:'right'});
+    y+=10;
+  });
+
+  const fname='customer_report_'+new Date().toISOString().slice(0,10)+'.pdf';
+  doc.save(fname);
+}
+
 // MAIN RENDER
 //
 function render(){
@@ -1748,6 +2316,8 @@ function render(){
   else if(S.view==='form')main.append(renderForm(null));
   else if(S.view==='billing')main.append(renderBilling());
   else if(S.view==='reports')main.append(renderReports());
+  else if(S.view==='billingRunsReport')main.append(renderBillingRunsReport());
+  else if(S.view==='customerReport')main.append(renderCustomerReportPage());
   else if(S.view==='edit'&&S.editId){
     const p=S.packets.find(x=>x.id===S.editId);
     if(p){
