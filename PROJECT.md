@@ -8,10 +8,11 @@ Billing tracker for jewellery appraisal work. Paula and Gabby invoice jewellery 
 - Repo: https://github.com/gabriellejl-bit/Appraisal-Tracker
 
 ## Stack
-- Frontend: Single HTML file (index.html) - vanilla JS, no framework
+- Frontend: Single HTML file (index.html) + external stylesheet (styles.css) - vanilla JS, no framework
+- CSS: Custom properties for design tokens, no build step
 - Database: Supabase (PostgreSQL) via REST API - no SDK, raw fetch
 - Hosting: GitHub Pages
-- Auth: None yet - user toggle in nav. Supabase email/password planned.
+- Auth: None yet - user toggle in topbar. Supabase email/password planned.
 - RLS enabled with open policies (no auth yet)
 
 ## Environments
@@ -168,10 +169,43 @@ Filter: date range (defaults this month) + retailer. Groups by retailer, lists i
 
 ---
 
-## Design System
-Fonts: Playfair Display (headings) - Outfit (UI) - DM Mono (refs/costs)
-Deep #2C2422 (nav) - Gold #B8963E (CTAs) - Plum #6E4B5E (Paula/Alexandra) - Sage #5C7A6B (Gabby/Billed) - Ember #B85C38 (errors) - Sky #4A7A9B (New). -light variants for badges.
-Icons: I object with SVG strings. Key: home, list, dollar, save, plus, download, edit, trash, search, back, refresh, check, alert, inbox, calendar, arrow, close, empty.
+## Design System (May 2026 Refresh)
+
+### Colours (CSS custom properties)
+- **Primary**: Gold `#CEA12B` (CTAs, gold-light `#FBF4DC`, gold-dark `#A07C22`)
+- **User buttons**: Teal `#269C9C` (Gabby active), Magenta `#B0215F` (Paula active), Mid-grey `#B9B8B8` (inactive)
+- **Text**: Deep `#2C1A17` (headings), Chocolate `#4F2E1D` (labels), Dark-grey `#828282` (body), Text-sec `#78706A` (secondary)
+- **Neutral**: White `#FFFFFF` (canvas), Light-grey `#F8F7F7` (containers)
+- **Legacy** (kept for legacy code): Plum, Sage, Ember, Sky (with -light variants)
+
+### Containers & Layout
+- **Layout**: Side nav + top bar + main content, all floating 20px-radius cards on 8px-padded white canvas
+- **Sidenav**: 220px fixed, sticky, height `calc(100vh - 16px)`, no border
+- **Topbar**: 90px height, 4-column grid (gap 16px), no border, 28px horizontal padding
+  - Col 1–2: Search input (50px height, 20px search icon, no border, white bg, 20px radius)
+  - Col 3: NEW PACKET button (50px pill)
+  - Col 4: User toggle (buttons + name/email, right-aligned)
+- **Main**: Flexible, no border, 24px/28px padding
+
+### Components
+- **Stat cards**: 261×180px, no border, 20px radius, 28px top/bottom padding, 20px left padding
+  - Standard: white background
+  - Primary: radial gradient `150.87% 78.11% at 16.67% 62.08%, #995728 0%, #4F2E1D 25.12%, #2C1A17 100%`, all text white
+  - Label: Montserrat 15px 800, chocolate (dark-grey on primary)
+  - Value: Montserrat 36px 800, black (white on primary)
+  - Subtitle: Jost 14px 200, black (white on primary), 6px margin-top
+- **Buttons**
+  - Primary/Gold: 50px height, 20px left padding (15px if icon), 11px vertical, 20px radius, icon 12px, gap 10px
+  - Secondary: transparent bg, chocolate border, chocolate text, 6% hover tint, same dimensions as primary
+  - Small: 13px Jost, 7×14px padding
+- **User toggle buttons**: 50×50px circles, Montserrat 36px 800, white text, 4px gap
+- **Top bar user info**: Right-aligned, name 16px Jost 200, email 12px Jost 200, 16px gap from buttons, vertically centered
+
+### Fonts
+Montserrat (display/headings), Jost (body/UI), Jost (mono, fallback for code)
+
+### Icons
+I object with SVG strings. Key: home, list, dollar, save, plus, download, edit, trash, search, back, refresh, check, alert, inbox, calendar, arrow, close, empty.
 
 ---
 

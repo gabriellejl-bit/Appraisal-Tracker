@@ -6,7 +6,7 @@
 Billing tracker for jewellery appraisals. Two users (Paula, Gabby) invoice retailers independently based on per-job cost split percentages.
 
 ## Stack
-Single HTML file, vanilla JS, Supabase (PostgreSQL via REST, no SDK), GitHub Pages. No auth yet (user toggle in nav). Two environments: prod (`index.html` on GitHub) and dev (`AppraisalTracker-dev.html`, local only) — differ only by Supabase URL/key and title.
+Single HTML file, vanilla JS, Supabase (PostgreSQL via REST, no SDK), GitHub Pages. No auth yet (user toggle in topbar). Two environments: prod (`index.html` on GitHub) and dev (`AppraisalTracker-dev.html`, local only) — differ only by Supabase URL/key and title. External stylesheet: `styles.css` with CSS custom properties for all design tokens.
 
 **Always deliver AppraisalTracker-dev.html for testing. Only deliver index.html (prod) when committing.**
 
@@ -37,7 +37,15 @@ Single HTML file, vanilla JS, Supabase (PostgreSQL via REST, no SDK), GitHub Pag
 6. Financial year: 1 April–31 March (NZ).
 
 ## Key Helpers
-`getCurrentUser()`, `packetCosts(id)`, `packetBillingLabel(pkt)`, `userHasBilled(pkt)`, `userHasNoWork(pktId)`, `getDollarStats()`, `getBillingItems()`, `buildInvoiceSummary(items, retailerId)` → `{byJobType, bySubCustomer, subtotal, gst, total, discountPct, isNJRetailer}`, `fmtD(d)`, `fmtMoney(n)`, `statusName(id)`, `statusId(name)`, `pad3(n)`, `sbAll/sbInsert/sbUpdate/sbDelete/sbUpsert`, `fetchPacketItems(id)`, `showToast()` (safe anywhere), `renderAsync()` (post-save).
+`getCurrentUser()`, `packetCosts(id)`, `packetBillingLabel(pkt)`, `userHasBilled(pkt)`, `userHasNoWork(pktId)`, `getDollarStats()`, `getBillingItems()`, `buildInvoiceSummary(items, retailerId)` → `{byJobType, bySubCustomer, subtotal, gst, total, discountPct, isNJRetailer}`, `fmtD(d)`, `fmtMoney(n)`, `statusName(id)`, `statusId(name)`, `pad3(n)`, `sbAll/sbInsert/sbUpdate/sbDelete/sbUpsert`, `fetchPacketItems(id)`, `showToast()` (safe anywhere), `renderAsync()` (post-save). Icon set `I` object (SVG strings in HTML).
+
+## Design System (May 2026 refresh)
+- **Colours**: Gold `#CEA12B` (primary CTA), Teal `#269C9C` (Gabby active), Magenta `#B0215F` (Paula active), Chocolate `#4F2E1D` (labels), Dark-grey `#828282` (body text), Mid-grey `#B9B8B8` (inactive).
+- **Containers**: No borders. Sidenav, topbar, main: background `#F8F7F7`, radius 20px, floating on 8px-padded white canvas.
+- **Topbar**: 90px height, 4-column grid. Search (cols 1–2), NEW PACKET button (col 3, 50px pill), user toggle (col 4: 50×50px letter buttons + right-aligned name/email).
+- **Stat cards**: 4-column row, 261px × 180px, no borders. Standard: white. Primary (4th): radial gradient, all text white. Labels Montserrat 15px 800, values Montserrat 36px 800, subtitles Jost 14px 200.
+- **Buttons**: Primary/Gold 50px pills (icon 12px, 15px left padding). Secondary: transparent, chocolate border, dark-grey text, 6% hover tint.
+- **Fonts**: Montserrat (display), Jost (body/mono).
 
 ## Coding Conventions
 - **State object `S`** holds all app state incl. `subCustomers` array. `render()` = full DOM rebuild.
