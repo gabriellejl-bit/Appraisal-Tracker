@@ -236,19 +236,19 @@ label.field-label{font-size:12px;font-weight:600;text-transform:uppercase;letter
 .form-sticky-actions{display:flex;gap:10px;}
 
 /* -- BUTTONS ------------------------------ */
-.btn{font-size:14px;font-weight:600;padding:10px 22px;border-radius:var(--radius);border:none;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:all .15s;white-space:nowrap;font-family:var(--font-body);}
+.btn{font-size:14px;font-weight:600;padding:10px 22px;border-radius:30px;border:none;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:all .15s;white-space:nowrap;font-family:var(--font-body);}
 .btn:hover{transform:translateY(-1px);box-shadow:var(--shadow-sm);}
 .btn:disabled{opacity:.4;cursor:default;transform:none;}
 .btn-primary{background:var(--deep);color:#F3EDE6;}
 .btn-primary:hover{background:#3D302D;}
-.btn-gold,.btn-secondary{height:50px;padding:11px 20px;border-radius:var(--radius-lg);font-size:16px;gap:10px;}
-.btn-gold,.btn-secondary svg{width:12px;height:12px;flex-shrink:0;}
+.btn-gold,.btn-secondary{height:50px;padding:11px 20px;font-size:16px;gap:10px;}
+.btn-gold svg,.btn-secondary svg{width:12px;height:12px;flex-shrink:0;}
 .btn-gold.has-icon,.btn-secondary.has-icon{padding-left:15px;}
 .btn-gold{background:var(--gold);color:#fff;}
 .btn-gold:hover{background:var(--gold-dark);}
 .btn-secondary{background:transparent;color:var(--chocolate);border:1px solid var(--chocolate);}
 .btn-secondary:hover{background:rgba(79,46,29,.06);}
-.btn-small{font-size:13px;padding:7px 14px;border-radius:8px;font-weight:500;background:var(--surface);border:1px solid var(--border);cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-family:var(--font-body);}
+.btn-small{font-size:13px;padding:7px 14px;border-radius:30px;font-weight:500;background:var(--surface);border:1px solid var(--border);cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-family:var(--font-body);}
 
 /* -- SPLIT BUTTON ----------------------- */
 .split-btn-wrap{position:relative;display:inline-flex;}

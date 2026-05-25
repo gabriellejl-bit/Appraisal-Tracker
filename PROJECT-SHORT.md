@@ -21,12 +21,25 @@ Single HTML file, vanilla JS, Supabase (PostgreSQL via REST, no SDK), GitHub Pag
 - **retailer_job_type_costs** — (retailer_id, job_type_id, cost). Created for future per-retailer pricing, currently empty.
 - **billing_runs** — audit trail. `packet_ids`/`retailer_ids` stored as CSV strings.
 
+## Dashboard
+- Shows "Unbilled Packets for [User]" — all unbilled packets for selected user (Paula or Gabby)
+- Filters exclude Billed status and Hold/Archived packets
+- 3 dollar cards: Unbilled / Earned This Week / Earned This Month (all POST-TAX, POST-DISCOUNT)
+- 4 status count cards: New / On Hold / Part Billed / Fully Billed
+- Quick actions: Search Records, Run Billing
+- By Retailer breakdown (this month only, excludes Archived)
+
 ## Nationwide Jewellers (NJ)
 - Flat 8.5% discount on all items (via retailers.discount_pct)
 - Has sub-customers: currently placeholder 'NJ1', 'NJ2' (stored in S.subCustomers)
 - sub_customer field on packet is required when retailer = NJ
-- Free-text customer ref (no padded prefix format)
+- Free-text customer ref (no padded prefix format, no length limit)
 - Billing PDF/invoice groups items by sub-customer with subtotals + discount line
+
+## Customer Reference
+- **Standard retailers** (Alexandra/Queenstown): accepts up to 7 digits, format "001-1234567"
+- **NJ**: free-text, no length limit
+- Validation: standard refs require 4-7 digits
 
 ## Critical Business Rules
 1. Cost split calculated on the fly via `packetCosts(id)` → `{total, paula, gabby}`. Applies retailer `discount_pct`.

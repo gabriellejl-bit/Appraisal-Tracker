@@ -122,7 +122,8 @@ Reports nav stays active for: reports, billingRunsReport, customerReport views.
   - Unbilled: excludes Hold and Archived, not yet billed by this user
   - Week/Month: includes billed + unbilled, excludes Hold and Archived
 - 4 status count cards: New / On Hold / Part Billed / Fully Billed
-- Recent packets (last 5) - whole row clickable to edit
+- Unbilled Packets for [user] - all unbilled packets for selected user, whole row clickable to edit
+  - Filters: excludes Billed status and Hold/Archived. Shows only packets where user hasn't billed yet
   - Table uses fixed layout. Columns: Date(108px), Ref(110px), Surname(90px truncated), Retailer(130px plain text), Status(136px nowrap), Edit(44px)
   - Retailer shown as plain text (no pill/badge)
 - Quick Actions: Search Records + Run Billing
@@ -143,7 +144,8 @@ Reports nav stays active for: reports, billingRunsReport, customerReport views.
   - Fully Billed warning when both billed
   - Delete packet button (confirmation, deletes items then packet)
 - Packet Details: Date, Retailer + Ref, Surname
-  - When retailer = NJ: ref field switches to free-text input (no padded prefix)
+  - Customer reference: accepts up to 7 digits for standard retailers (Alexandra/Queenstown, format: "001-1234567")
+  - When retailer = NJ: ref field switches to free-text input (no padded prefix, no length limit)
   - When retailer = NJ: required Sub-customer dropdown appears (NJ1/NJ2)
   - Sub-customer is required for NJ - validation blocks save if empty
 - Items (up to 3): Item + Job Type (both by display_order), Cost, Split slider (right = Gabby increases)
