@@ -51,8 +51,9 @@ Values: New (1), Hold from Billing (2), Billed (3), Archived (4 - hidden everywh
 Always use name in UI. "Billed" is auto-managed only - never set manually.
 
 ### retailers (lookup)
-id, name, code INTEGER (displays as "001"), discount_pct DECIMAL (default 0)
-Values: Alexandra (1, code 1), Queenstown (2, code 2), Nationwide Jewellers (3, code 3, discount 8.5%)
+id, name, code INTEGER (displays as "001"), discount_pct DECIMAL (default 0), combined_billing BOOLEAN (default false)
+Values: Alexandra (1, code 1), Queenstown (2, code 2), Nationwide Jewellers (3, code 3, discount 8.5%, combined_billing true)
+Alexandra and Queenstown display as "Jamies Alexandra"/"Jamies Queenstown" in PDFs (mapped in generatePDFContent).
 WARNING: Never append &select=* to sbAll calls - sbAll already includes ?select=* and doubling it causes duplicate rows returned from Supabase.
 
 ### items (lookup)
@@ -100,13 +101,22 @@ id TEXT PK, run_date TEXT, user_name TEXT (slug), retailer_ids TEXT (csv), packe
 
 **Falsy trap:** Use != null for numeric defaults where 0 is valid. e.g. row.gabrielle_pct != null ? row.gabrielle_pct : 100
 
-**Nationwide Jewellers (NJ):**
-- Retailer id=3, code=3, discount_pct=8.5
+**Nationwide Jewellers (NJ) — Combined Billing:**
+- combined_billing=true: Gabby invoices the retailer for FULL job cost + GST. Paula invoices Gabby for her % share.
+- Gabby's Run Billing selection includes ALL NJ items (even where gabrielle_pct=0). Paula sees only paula_pct > 0 items.
+- Step 2 modal: Gabby → "[Retailer] — All", Paula → "[Retailer] — Invoice Gabby" (subtitle: "Invoice to: Gabby Lovering")
+- PDF header: Gabby → retailer name only. Paula → "Invoice to: Gabby Lovering"
 - Has sub-customers (currently NJ1, NJ2) stored in S.subCustomers array in state
-- sub_customer field on packets is required when retailer = NJ, optional/null otherwise
-- Customer ref is free-text for NJ (no padded prefix format) - ref format varies per sub-customer
-- Billing PDF and invoice summary group NJ items by sub-customer with subtotals, then shows gross subtotal -> discount line -> net subtotal -> GST -> total
-- buildInvoiceSummary() returns bySubCustomer map and isNJRetailer flag for conditional rendering
+- sub_customer required on packets when retailer = NJ, free-text customer ref (no padded prefix)
+- Invoice summary groups NJ items by sub-customer with subtotals → gross subtotal → discount → net subtotal → GST → total
+- isRetailerCombined(retailerId) checks combined_billing flag. Future combined-billing retailers: set flag in DB only.
+
+**Invoice Groupings:**
+Job types mapped to three billing categories (INVOICE_GROUPS constant + invoiceGroup(jtName)):
+- Valuations — default (all types not listed below)
+- Stock — "Stock Update", "Stock - New"
+- Pearl Threading — "Pearl Threading"
+NJ sub-customer breakdown uses raw job type names (not grouped).
 
 ---
 
@@ -153,11 +163,11 @@ Reports nav stays active for: reports, billingRunsReport, customerReport views.
 - gabrielle_pct=0 loads correctly (not falsy-defaulted to 100)
 
 ### Run Billing (4 steps)
-1. Selection: filter + pre-checked items (excludes Hold/Archived/already billed/0% items). Uses b.initialised flag.
-2. Retailer modal loop: items table + invoice summary (GST conditional). Back/Next/Generate PDFs.
+1. Selection: date filter (default: last month), status filter. Date pills: All / Last Week / This Month / Last Month / Custom. Auto-selects eligible items via b.initialised flag (reset on nav click and user toggle). Combined-billing retailers: Gabby sees all items; Paula sees only her items.
+2. Retailer modal loop: invoice summary first (copy/paste into billing system), then items table below. GST conditional. Back/Next/Generate PDFs.
+   - Modal title: standard → "[Retailer] — Invoice Summary". Combined Gabby → "[Retailer] — All". Combined Paula → "[Retailer] — Invoice Gabby".
    - NJ invoice summary groups by sub-customer with subtotals + discount line
-3. PDFs: preview + download per retailer (jsPDF A4). Confirm + Mark as Billed.
-   - NJ PDFs include Sub-customer column and sub-customer grouping in summary
+3. PDFs: jsPDF A4, Courier monospace. Title: "PGJ Appraisals, Detailed Report". Separator widths: 90 chars (standard), 100 chars (NJ). Confirm + Mark as Billed.
 4. Confirm: sets per-user billed flags, auto-sets Billed when both done. Saves billing run.
 
 ### Reports (landing page)
@@ -226,7 +236,8 @@ I object with SVG strings. Key: home, list, dollar, save, plus, download, edit, 
 - getDollarStats() - {unbilled, earnedWeek, earnedMonth} - POST-TAX, POST-DISCOUNT
 - packetCosts(id) - applies retailer discount_pct, returns {total, paula, gabby}
 - packetBillingLabel(pkt), userHasBilled(pkt), userHasNoWork(pktId)
-- getBillingItems(), buildInvoiceSummary(items, retailerId) - returns {byJobType, bySubCustomer, subtotal, gst, total, discountPct, isNJRetailer}
+- getBillingItems(), isRetailerCombined(retailerId), invoiceGroup(jtName)
+- buildInvoiceSummary(items, retailerId) - returns {byJobType, bySubCustomer, subtotal, gst, total, discountPct, isNJRetailer, isCombined, isCombinedGabby, isCombinedPaula}
 - renderBreadcrumb(section), renderBillingRunsReport(), renderCustomerReportPage()
 - downloadCustomerReportPDF(packets, filters)
 - fmtD(d), dateToISO(s), parseStoredDate(s), getDateRange(key), pad3(n), fmtMoney(n)
@@ -234,7 +245,7 @@ I object with SVG strings. Key: home, list, dollar, save, plus, download, edit, 
 
 **IDs:** Date.now().toString(36) + random
 
-**Refactor debt:** inline user ternaries should use getCurrentUser(); cu2/cu3/cu4 in billing report should be one call.
+**Refactor debt:** inline user ternaries should use getCurrentUser() — one call per function, not cu2/cu3/cu4 copies.
 
 ---
 
@@ -251,78 +262,10 @@ I object with SVG strings. Key: home, list, dollar, save, plus, download, edit, 
 ## Planned Features
 - Proper auth (Supabase email/password)
 - CSV matching Solo accounting import
-- Refactor: consolidate getCurrentUser() calls
 - NJ sub-customer names to be confirmed and updated in S.subCustomers (currently placeholder 'NJ1', 'NJ2')
 - retailer_job_type_costs table ready for future per-retailer pricing if needed
 
 ---
 
-## Learnings & Bug Prevention
-
-### Rule 1 - Variable declaration order
-const/let not hoisted. Reference before declaration = blank screen.
-Declare variables before any function that uses them.
-
-### Rule 2 - Never render() from inside a form
-Wipes all draft state. toast() also calls render() twice.
-Use showToast() for feedback. Use renderAsync() after save.
-
-### Rule 3 - Non-critical tables load separately
-Throw in main loadAll() try block = permanent spinner.
-users, packet_items, billing_runs each in own try/catch.
-
-### Rule 4 - Never assume a table has an id column
-items PK is name. order=id.asc throws 42703.
-Every sbAll specifies its own order param.
-
-### Rule 5 - No non-ASCII in JavaScript
-Causes SyntaxError = spinner. Use ASCII only in JS.
-After Python codegen: scan script block before delivering.
-
-### Rule 6 - Never disable primary buttons
-Use showToast() in click handler for empty state.
-
-### Rule 7 - Blank screen = browser console first
-Right-click -> Inspect -> Console.
-
-### Rule 8 - Auto-select uses initialised flag not Set.size
-Set.size===0 re-triggers when user unchecks all.
-Use b.initialised flag. Reset on context change.
-
-### Rule 9 - Never use || for 0-valid numeric defaults
-Use: value != null ? value : default
-
-### Rule 10 - stopPropagation in clickable rows
-Nested buttons/checkboxes must call e.stopPropagation().
-
-### Rule 11 - Verify icon exists in I object before use
-I.missingIcon renders as "undefined" in UI.
-Check I object before adding any new ic() call.
-
-### Rule 12 - Never append &select=* to sbAll queries
-sbAll already prepends ?select=* internally. Adding &select=* again causes Supabase to return duplicate rows. Use only the extra filter/order params e.g. '&order=name.asc'.
-
-### Rule 13 - Always test in dev before prod
-The file downloaded from GitHub Pages has prod credentials. Never test directly from it.
-Always use AppraisalTracker-dev.html with dev Supabase for testing.
-Claude delivers both files: dev for testing, prod only when committing.
-
-### Rule 14 - Dashboard dollar cards are post-tax post-discount
-getDollarStats() must apply both retailer discount_pct AND user income_tax_rate.
-Formula: cost * (1 - discount_pct/100) * userPct% * (1 - income_tax_rate/100).
-packetCosts() applies discount only (no tax) - used for invoice/billing totals.
-
-### Pre-delivery checklist
-- [ ] No const/let referenced before declaration
-- [ ] No render()/toast() inside form validation
-- [ ] Non-critical tables in separate try/catch
-- [ ] No non-ASCII in script block
-- [ ] No literal newlines in JS strings
-- [ ] No duplicate variable declarations in same scope
-- [ ] Primary buttons not disabled
-- [ ] Auto-select uses b.initialised not Set.size
-- [ ] Numeric defaults use != null not ||
-- [ ] Nested row elements have stopPropagation
-- [ ] All ic() references exist in I object
-- [ ] No &select=* appended to sbAll queries
-- [ ] Delivering AppraisalTracker-dev.html (dev credentials) for testing
+## Bug Prevention
+See CLAUDE.md for the full rules list and pre-delivery checklist.

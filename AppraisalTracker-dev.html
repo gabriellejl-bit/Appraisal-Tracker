@@ -55,7 +55,7 @@ let S={
   },
   billing:{
     step:0,           // 0=off, 1=selection, 2=retailer loop, 3=generate, 4=confirm
-    filters:{statuses:[],dateRange:'all',dateFrom:'',dateTo:''},
+    filters:{statuses:[],dateRange:'lastmonth',dateFrom:'',dateTo:''},
     selectedItemIds:new Set(), // packet_item ids checked in step 1
     retailers:[],     // retailer ids with records in selection (ordered)
     retailerIdx:0,    // current retailer in loop
@@ -159,6 +159,7 @@ function getDateRange(key){
     case 'lastmonth':{const lm=mo===0?11:mo-1,ly=mo===0?yr-1:yr;return{from:new Date(ly,lm,1),to:new Date(ly,lm+1,0,23,59,59)};}
     case 'thisfy':return{from:new Date(fyYear,3,1),to:new Date(fyYear+1,2,31,23,59,59)};
     case 'lastfy':return{from:new Date(fyYear-1,3,1),to:new Date(fyYear,2,31,23,59,59)};
+    case 'lastweek':{const d=now.getDate();const dow=(now.getDay()+6)%7;const mon=new Date(yr,mo,d-dow-7);mon.setHours(0,0,0,0);const sun=new Date(yr,mo,d-dow-1);sun.setHours(23,59,59);return{from:mon,to:sun};}
     default:return null;
   }
 }
@@ -406,7 +407,7 @@ function renderNav(){
     const isActive=S.user===u.slug;
     const btnClass='user-btn '+(isActive?(u.slug==='paula'?'paula':'gabby'):'inactive');
     const letter=u.slug==='paula'?'P':'G';
-    const btn=h('button',{className:btnClass,onClick:()=>{S.user=u.slug;S.billing.selectedItemIds=new Set();render();}},letter);
+    const btn=h('button',{className:btnClass,onClick:()=>{S.user=u.slug;S.billing.selectedItemIds=new Set();S.billing.initialised=false;render();}},letter);
     toggleBtns.append(btn);
   });
   const toggle=h('div',{className:'user-toggle'},toggleBtns,userInfo);
@@ -432,7 +433,7 @@ function renderNav(){
   navLinks.forEach(nl=>{
     const isActive=nl.view==='home'?S.view==='home':nl.view==='reports'?isReportsView:S.view===nl.view;
     const link=h('button',{className:'nav-link'+(isActive?' active':''),onClick:()=>{
-      if(nl.view==='billing'){S.view='billing';S.billing.step=1;render();}
+      if(nl.view==='billing'){S.view='billing';S.billing.step=1;S.billing.selectedItemIds=new Set();S.billing.initialised=false;render();}
       else if(nl.view==='reports'){S.view='reports';render();}
       else{S.view=nl.view;render();}
     }},ic(nl.icon),' ',nl.label);
@@ -553,7 +554,7 @@ function renderHome(){
     h('button',{className:'qa-btn',onClick:()=>{S.view='records';render();}},h('div',{className:'qa-icon sage',htmlContent:I.search}),h('div',{className:'qa-text'},h('span',{className:'qa-label'},'Search Records'),h('span',{className:'qa-hint'},'Find by ref, date or name'))),
     h('button',{className:'qa-btn',onClick:()=>{
       S.view='billing';S.billing.step=1;
-      S.billing.filters={statuses:[],dateRange:'all',dateFrom:'',dateTo:''};
+      S.billing.filters={statuses:[],dateRange:'lastmonth',dateFrom:'',dateTo:''};
       S.billing.selectedItemIds=new Set();S.billing.initialised=false;
       S.billing.retailers=[];S.billing.retailerIdx=0;
       S.billing.generatedPDFs={};S.billing.runId=null;
@@ -1344,11 +1345,18 @@ function getBillingItems(){
   const pktIds=new Set(pkts.map(p=>p.id));
   return S.allPacketItems.filter(i=>{
     if(!pktIds.has(i.packet_id))return false;
-    // Exclude if this user has 0% on this item
+    // For combined-billing retailers, Gabby invoices full cost — include all items
+    const pkt=S.packets.find(p=>p.id===i.packet_id);
+    if(pkt&&isRetailerCombined(pkt.retailer_id)&&user==='gabby')return true;
+    // Standard: exclude if this user has 0% on this item
     const pct=user==='paula'?(i.paula_pct||0):(i.gabrielle_pct||0);
     return pct>0;
   });
 }
+
+const INVOICE_GROUPS={'Pearl Threading':'Pearl Threading','Stock Update':'Stock','Stock - New':'Stock'};
+function invoiceGroup(jtName){return INVOICE_GROUPS[jtName]||'Valuations';}
+function isRetailerCombined(retailerId){const r=S.retailers.find(r=>r.id===retailerId);return !!(r&&r.combined_billing);}
 
 function buildInvoiceSummary(items,retailerId){
   const user=S.user;
@@ -1356,20 +1364,24 @@ function buildInvoiceSummary(items,retailerId){
   const discountPct=retailer?retailer.discount_pct||0:0;
   const discountMult=1-discountPct/100;
   const isNJRetailer=retailer&&retailer.name==='Nationwide Jewellers';
+  const isCombined=!!(retailer&&retailer.combined_billing);
+  const isCombinedGabby=isCombined&&user==='gabby';
+  const isCombinedPaula=isCombined&&user==='paula';
 
-  const byJobType={};
+  // Pre-seed in display order: Valuations first, then Stock, then Pearl Threading
+  const byJobType={'Valuations':0,'Stock':0,'Pearl Threading':0};
   const bySubCustomer={};// NJ only: {subCustomer: {jobTypeName: amount}}
 
   items.forEach(i=>{
     const pkt=S.packets.find(p=>p.id===i.packet_id);
     if(!pkt||pkt.retailer_id!==retailerId)return;
     const cost=(parseFloat(i.cost)||0)*discountMult;
-    const pct=(user==='paula'?(i.paula_pct||0):(i.gabrielle_pct||0))/100;
+    const pct=isCombinedGabby?1:(user==='paula'?(i.paula_pct||0):(i.gabrielle_pct||0))/100;
     const userCost=cost*pct;
     const jt=S.jobTypes.find(j=>j.id===i.job_type_id);
     const jtName=jt?jt.name:'Unknown';
-    if(!byJobType[jtName])byJobType[jtName]=0;
-    byJobType[jtName]+=userCost;
+    const grp=invoiceGroup(jtName);
+    byJobType[grp]+=userCost;
     if(isNJRetailer){
       const sc=pkt.sub_customer||'Unassigned';
       if(!bySubCustomer[sc])bySubCustomer[sc]={};
@@ -1377,10 +1389,12 @@ function buildInvoiceSummary(items,retailerId){
       bySubCustomer[sc][jtName]+=userCost;
     }
   });
+  // Remove groups with zero value so they don't appear on the invoice
+  Object.keys(byJobType).forEach(k=>{if(byJobType[k]===0)delete byJobType[k];});
   const subtotal=Object.values(byJobType).reduce((a,b)=>a+b,0);
   const gst=subtotal*(getCurrentUser().gst_rate||0)/100;
   const total=subtotal+gst;
-  return{byJobType,bySubCustomer,subtotal,gst,total,discountPct,isNJRetailer};
+  return{byJobType,bySubCustomer,subtotal,gst,total,discountPct,isNJRetailer,isCombined,isCombinedGabby,isCombinedPaula};
 }
 
 function stepIndicator(current,total){
@@ -1432,7 +1446,7 @@ function renderBillingStep1(){
   const drWrap=h('div',{style:{display:'flex',flexDirection:'column',gap:'6px'}});
   drWrap.append(h('label',{className:'field-label',style:{marginBottom:'0'}},'Date Range'));
   const drPills=h('div',{style:{display:'flex',flexWrap:'wrap',gap:'5px'}});
-  [['all','All'],['month','This Month'],['lastmonth','Last Month'],['thisfy','This FY'],['lastfy','Last FY'],['custom','Custom']].forEach(([v,l])=>{
+  [['all','All'],['lastweek','Last Week'],['month','This Month'],['lastmonth','Last Month'],['custom','Custom']].forEach(([v,l])=>{
     const on=f.dateRange===v;
     const p=h('button',{style:{padding:'5px 10px',borderRadius:'20px',border:'1px solid',fontSize:'12px',fontWeight:'600',cursor:'pointer',fontFamily:'var(--font-body)',borderColor:on?'var(--gold)':'var(--border)',background:on?'var(--gold-light)':'var(--surface)',color:on?'var(--gold-dark)':'var(--text-muted)'}},l);
     p.addEventListener('click',()=>{f.dateRange=v;render();});
@@ -1542,6 +1556,7 @@ function renderBillingStep2(){
   // Get selected items for this retailer
   const myItems=S.allPacketItems.filter(i=>b.selectedItemIds.has(i.id)&&(S.packets.find(p=>p.id===i.packet_id)||{}).retailer_id===retailerId);
   const summary=buildInvoiceSummary(myItems,retailerId);
+  const {isCombinedGabby,isCombinedPaula}=summary;
 
   const overlay=h('div',{className:'modal-overlay'});
   const modal=h('div',{className:'modal'});
@@ -1550,8 +1565,8 @@ function renderBillingStep2(){
   const hdr=h('div',{className:'modal-header'});
   hdr.append(
     h('div',{},
-      h('div',{className:'modal-title'},retName+' -- Invoice Summary'),
-      h('div',{className:'modal-subtitle'},displayName+'  -  '+(b.retailerIdx+1)+' of '+totalRetailers+' retailers'),
+      h('div',{className:'modal-title'},retName+' -- '+(isCombinedGabby?'All':isCombinedPaula?'Invoice Gabby':'Invoice Summary')),
+      h('div',{className:'modal-subtitle'},(isCombinedPaula?'Invoice to: Gabby Lovering':displayName)+'  -  '+(b.retailerIdx+1)+' of '+totalRetailers+' retailers'),
     ),
     stepIndicator(b.retailerIdx+1, totalRetailers),
   );
@@ -1565,24 +1580,10 @@ function renderBillingStep2(){
   const criteriaText='Status: '+(f.statuses.map(id=>statusName(id)).join(', ')||'All')+'  -  Date: '+(f.dateRange==='all'?'All dates':f.dateRange==='custom'?f.dateFrom+' to '+f.dateTo:f.dateRange);
   body.append(h('p',{style:{fontSize:'12px',color:'var(--text-muted)',marginBottom:'16px'}},criteriaText));
 
-  // Items table for this retailer
-  body.append(h('h3',{style:{fontFamily:'var(--font-display)',fontSize:'14px',fontWeight:'600',color:'var(--deep)',marginBottom:'8px'}},'Items included ('+myItems.length+')'));
-  const tbl=h('table',{className:'summary-table'});
-  tbl.append(h('thead',{},h('tr',{},h('th',{},'Date'),h('th',{},'Ref'),h('th',{},'Surname'),h('th',{},'Item'),h('th',{},'Job Type'),h('th',{className:'right'},'Cost ($)'))));
-  const tb=h('tbody',{});
-  myItems.forEach(i=>{
-    const pkt=S.packets.find(p=>p.id===i.packet_id)||{};
-    const jt=S.jobTypes.find(j=>j.id===i.job_type_id)||{};
-    const cost=parseFloat(i.cost)||0;
-    const pct=(user==='paula'?(i.paula_pct||0):(i.gabrielle_pct||0))/100;
-    tb.append(h('tr',{},h('td',{},pkt.date||''),h('td',{style:{fontFamily:'var(--font-mono)',fontSize:'12px'}},pkt.customer_ref||''),h('td',{},pkt.surname||''),h('td',{},i.item||''),h('td',{},jt.name||''),h('td',{className:'right'},fmtMoney(cost*pct))));
-  });
-  tbl.append(tb);body.append(tbl);
-
-  // Invoice summary
-  body.append(h('h3',{style:{fontFamily:'var(--font-display)',fontSize:'14px',fontWeight:'600',color:'var(--deep)',margin:'20px 0 8px'}},'Invoice Summary -- copy/paste into billing system'));
+  // Invoice summary -- copy/paste (shown first, most important)
+  body.append(h('h3',{style:{fontFamily:'var(--font-display)',fontSize:'14px',fontWeight:'600',color:'var(--deep)',margin:'0 0 8px'}},'Invoice Summary -- copy/paste into billing system'));
   const sumTbl=h('table',{className:'summary-table'});
-  sumTbl.append(h('thead',{},h('tr',{},h('th',{},'Job Type'),h('th',{className:'right'},'Amount'))));
+  sumTbl.append(h('thead',{},h('tr',{},h('th',{},'Description'),h('th',{className:'right'},'Amount'))));
   const stb=h('tbody',{});
 
   if(summary.isNJRetailer&&Object.keys(summary.bySubCustomer).length){
@@ -1606,16 +1607,30 @@ function renderBillingStep2(){
     stb.append(h('tr',{className:'total-row'},h('td',{},'Subtotal'),h('td',{className:'right'},fmtMoney(summary.subtotal))));
   }
 
-  const cu2=getCurrentUser();
+  const cu=getCurrentUser();
   const gstRows=[];
-  if(cu2.gst_registered){
-    gstRows.push(h('tr',{},h('td',{style:{color:'var(--text-muted)'}},'GST ('+cu2.gst_rate+'%)'),h('td',{className:'right',style:{color:'var(--text-muted)'}},fmtMoney(summary.subtotal*(cu2.gst_rate/100)))));
+  if(cu.gst_registered){
+    gstRows.push(h('tr',{},h('td',{style:{color:'var(--text-muted)'}},'GST ('+cu.gst_rate+'%)'),h('td',{className:'right',style:{color:'var(--text-muted)'}},fmtMoney(summary.subtotal*(cu.gst_rate/100)))));
   }
   stb.append(
     ...gstRows,
-    h('tr',{className:'total-row'},h('td',{},'Total'),h('td',{className:'right'},fmtMoney(cu2.gst_registered?summary.subtotal*(1+cu2.gst_rate/100):summary.subtotal))),
+    h('tr',{className:'total-row'},h('td',{},'Total'),h('td',{className:'right'},fmtMoney(cu.gst_registered?summary.subtotal*(1+cu.gst_rate/100):summary.subtotal))),
   );
   sumTbl.append(stb);body.append(sumTbl);
+
+  // Items table -- shown below the invoice summary
+  body.append(h('h3',{style:{fontFamily:'var(--font-display)',fontSize:'14px',fontWeight:'600',color:'var(--deep)',margin:'24px 0 8px'}},'Items included ('+myItems.length+')'));
+  const tbl=h('table',{className:'summary-table'});
+  tbl.append(h('thead',{},h('tr',{},h('th',{},'Date'),h('th',{},'Ref'),h('th',{},'Surname'),h('th',{},'Item'),h('th',{},'Job Type'),h('th',{className:'right'},'Cost ($)'))));
+  const tb=h('tbody',{});
+  myItems.forEach(i=>{
+    const pkt=S.packets.find(p=>p.id===i.packet_id)||{};
+    const jt=S.jobTypes.find(j=>j.id===i.job_type_id)||{};
+    const cost=parseFloat(i.cost)||0;
+    const pct=isCombinedGabby?1:(user==='paula'?(i.paula_pct||0):(i.gabrielle_pct||0))/100;
+    tb.append(h('tr',{},h('td',{},pkt.date||''),h('td',{style:{fontFamily:'var(--font-mono)',fontSize:'12px'}},pkt.customer_ref||''),h('td',{},pkt.surname||''),h('td',{},i.item||''),h('td',{},jt.name||''),h('td',{className:'right'},fmtMoney(cost*pct))));
+  });
+  tbl.append(tb);body.append(tbl);
   modal.append(body);
 
   // Footer
@@ -1645,6 +1660,7 @@ function renderBillingStep2(){
 function generatePDFContent(retailerId){
   const b=S.billing;const user=S.user;
   const retName=retailerName(retailerId);
+  const pdfRetName={'Alexandra':'Jamies Alexandra','Queenstown':'Jamies Queenstown'}[retName]||retName;
   const displayName=getCurrentUser().name;
   const retailer=S.retailers.find(r=>r.id===retailerId);
   const discountPct=retailer?retailer.discount_pct||0:0;
@@ -1652,25 +1668,30 @@ function generatePDFContent(retailerId){
   const isNJRetailer=retailer&&retailer.name==='Nationwide Jewellers';
   const myItems=S.allPacketItems.filter(i=>b.selectedItemIds.has(i.id)&&(S.packets.find(p=>p.id===i.packet_id)||{}).retailer_id===retailerId);
   const summary=buildInvoiceSummary(myItems,retailerId);
+  const {isCombinedGabby,isCombinedPaula}=summary;
   const now=new Date();
 
   let lines=[];
-  lines.push('VALUATION BILLING REPORT');
-  lines.push(retName+' -- '+displayName);
+  lines.push('PGJ Appraisals, Detailed Report');
+  lines.push(isCombinedGabby?pdfRetName:pdfRetName+' -- '+(isCombinedPaula?'Invoice to: Gabby Lovering':displayName));
   lines.push(fmtD(now));
+  const bf=S.billing.filters;
+  if(bf.dateRange==='all'){lines.push('Period: All dates');}
+  else if(bf.dateRange==='custom'&&bf.dateFrom&&bf.dateTo){lines.push('Period: '+bf.dateFrom+' to '+bf.dateTo);}
+  else{const dr=getDateRange(bf.dateRange);if(dr)lines.push('Period: '+fmtD(dr.from)+' to '+fmtD(dr.to));}
   lines.push('');
   lines.push('ITEM DETAILS');
-  lines.push('-'.repeat(80));
+  lines.push('-'.repeat(isNJRetailer?100:90));
   const hdrCols=isNJRetailer
     ?('Date').padEnd(14)+('Ref').padEnd(18)+('Sub-customer').padEnd(14)+('Surname').padEnd(14)+('Item').padEnd(14)+('Job Type').padEnd(18)+('Cost').padStart(8)
-    :('Date').padEnd(14)+('Ref').padEnd(12)+('Surname').padEnd(16)+('Item').padEnd(18)+('Job Type').padEnd(22)+('Cost').padStart(8);
+    :('Date').padEnd(14)+('Ref').padEnd(12)+('Surname').padEnd(16)+('Item').padEnd(18)+('Description').padEnd(22)+('Cost').padStart(8);
   lines.push(hdrCols);
-  lines.push('-'.repeat(80));
+  lines.push('-'.repeat(isNJRetailer?100:90));
   myItems.forEach(i=>{
     const pkt=S.packets.find(p=>p.id===i.packet_id)||{};
     const jt=S.jobTypes.find(j=>j.id===i.job_type_id)||{};
     const cost=(parseFloat(i.cost)||0)*discountMult;
-    const pct=(user==='paula'?(i.paula_pct||0):(i.gabrielle_pct||0))/100;
+    const pct=isCombinedGabby?1:(user==='paula'?(i.paula_pct||0):(i.gabrielle_pct||0))/100;
     if(isNJRetailer){
       lines.push(
         (pkt.date||'').padEnd(14)+
@@ -1692,7 +1713,7 @@ function generatePDFContent(retailerId){
       );
     }
   });
-  lines.push('-'.repeat(80));
+  lines.push('-'.repeat(isNJRetailer?100:90));
   lines.push('');
   lines.push('SUMMARY');
   lines.push('-'.repeat(40));
@@ -1730,14 +1751,13 @@ function generatePDFContent(retailerId){
 }
 
 function downloadTextAsPDF(text, filename){
-  // Generate PDF using jsPDF
   const doc=new window.jspdf.jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
   const lines=text.split('\n');
   let y=15;
   lines.forEach(line=>{
     if(y>275){doc.addPage();y=15;}
-    const size=line.startsWith('VALUATION')?13:line.startsWith('-')?8:9;
-    const bold=line.startsWith('VALUATION')||line.startsWith('SUMMARY')||line.startsWith('ITEM')||line.startsWith('TOTAL')||line.startsWith('Subtotal');
+    const size=line.startsWith('PGJ')?13:line.startsWith('-')?8:9;
+    const bold=line.startsWith('PGJ')||line.startsWith('SUMMARY')||line.startsWith('ITEM')||line.startsWith('TOTAL')||line.startsWith('Subtotal');
     doc.setFontSize(size);
     doc.setFont('courier',bold?'bold':'normal');
     doc.text(line,10,y);
