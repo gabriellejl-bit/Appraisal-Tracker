@@ -48,6 +48,22 @@ Full project reference: `PROJECT.md` and `PROJECT-SHORT.md` — read these for D
 11. **Declaration order** — `const`/`let` are not hoisted; never reference before declaration
 12. **Dashboard dollar cards are POST-TAX, POST-DISCOUNT** — `getDollarStats()` must apply both `discount_pct` and `income_tax_rate`
 
+## Design System & Styling
+
+**Reference:** See `project_styling_progress.md` in memory for complete styling details, Figma reference (fileKey: `bDb5CJBIcdtEKdKIsGYhs4`).
+
+**Spacing scale:** Global CSS variables `--space-xs` through `--space-6xl` (8px to 80px). Use for gaps, padding, margins.
+
+**Corner radius:** `--rounded-md`, `--rounded-lg`, `--rounded-xl`, `--rounded-2xl`, `--rounded-3xl`, `--rounded-full`.
+
+**Typography:** Utility classes `.h1`–`.h4` (headings), `.para`, `.para-lg`, `.para-sm`, `.para-mini` (body), `.caption`, `.mono`. All use DM Sans body font.
+
+**Buttons:** `.btn-primary` (gold, 42px), `.btn-secondary` (outline, 42px), `.btn-link` (text only), `.btn-destructive`, `.btn-sm` (small inline 13px). Primary text is `#FCF9F6` (off-white).
+
+**Form fields:** Inputs/selects = white bg, no border, `--rounded-xl` (12px), `var(--space-sm)` padding. Item area selects = secondary bg (#f3f0ed), border 1px, custom SVG chevron.
+
+**Colour tokens:** Use Figma scale names: `--violet-800`, `--gold-400`, `--brand-neutral-300`, `--brand-neutral-600`, `--secondary`, `--foreground`, `--secondary-foreground`. Avoid legacy names (`--gold-dark`, plum, sage, etc.).
+
 ## Pre-Delivery Checklist
 
 - [ ] Edited `AppraisalTracker-dev.html` (not `index.html`)

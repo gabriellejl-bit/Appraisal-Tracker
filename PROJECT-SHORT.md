@@ -72,13 +72,15 @@ Job types map to three billing categories on invoices and PDFs:
 ## Key Helpers
 `getCurrentUser()`, `packetCosts(id)`, `packetBillingLabel(pkt)`, `userHasBilled(pkt)`, `userHasNoWork(pktId)`, `getDollarStats()`, `getBillingItems()`, `isRetailerCombined(retailerId)`, `invoiceGroup(jtName)`, `buildInvoiceSummary(items, retailerId)` → `{byJobType, bySubCustomer, subtotal, gst, total, discountPct, isNJRetailer, isCombined, isCombinedGabby, isCombinedPaula}`, `fmtD(d)`, `fmtMoney(n)`, `statusName(id)`, `statusId(name)`, `pad3(n)`, `sbAll/sbInsert/sbUpdate/sbDelete/sbUpsert`, `fetchPacketItems(id)`, `showToast()` (safe anywhere), `renderAsync()` (post-save). Icon set `I` object (SVG strings in HTML).
 
-## Design System (May 2026 refresh)
-- **Colours**: Gold `#CEA12B` (primary CTA), Teal `#269C9C` (Gabby active), Magenta `#B0215F` (Paula active), Chocolate `#4F2E1D` (labels), Dark-grey `#828282` (body text), Mid-grey `#B9B8B8` (inactive).
+## Design System (June 2026 refresh)
+- **Figma library**: "Ombra kit - Appraisals Billing System" — source of truth for all components/tokens.
+- **Colours**: Gold `#CEA12B` (primary CTA), Gold-dark `#995728` (hover), Teal `#269C9C` (Gabby/New status), Magenta `#B0215F` (Paula active), Rose `#9D174D` (Hold status), Chocolate `#4F2E1D` (labels), Dark-grey `#828282` (body text), Mid-grey `#B9B8B8` (inactive).
 - **Containers**: No borders. Sidenav, topbar, main: background `#F8F7F7`, radius 20px, floating on 8px-padded white canvas.
-- **Topbar**: 90px height, 4-column grid. Search (cols 1–2), NEW PACKET button (col 3, 50px pill), user toggle (col 4: 50×50px letter buttons + right-aligned name/email).
-- **Stat cards**: 261px × 180px, no borders. Standard: white. Primary (4th): radial gradient, all text white. Labels Montserrat 15px 800, values Montserrat 36px 800, subtitles Jost 14px 200.
-- **Buttons**: Primary/Gold 50px pills. Secondary: transparent, chocolate border, dark-grey text, 6% hover tint.
-- **Fonts**: Montserrat (display), Jost (body/mono).
+- **Topbar**: 90px height, 4-column grid. Search (cols 1–2), NEW PACKET button (col 3), user toggle (col 4: 50×50px letter buttons + right-aligned name/email). Topbar button sizing is a separate pass — do not align to standard button spec yet.
+- **Stat cards**: 261px × 180px, no borders. Standard: white. Primary (4th): radial gradient, all text white. Labels Montserrat 15px 800, values Montserrat 36px 800, subtitles DM Sans 14px 200.
+- **Buttons** (Ombra kit — Round roundness only): `.btn` base 36px, `padding:8px 16px`, 14px DM Sans Medium. `.btn-gold` = Primary Large 42px, `padding:10px 24px`, 16px, gold fill `#CEA12B`, text `#FCF9F6`, hover gold-dark. `.btn-secondary` = Outline — white fill, `#995728` border, `--deep` text, hover: gold-dark fill + `#FCF9F6` text. `.btn-destructive` = red `#DC263B`. `.btn-small` = small inline surface button (unchanged). `.btn-primary` = small gold inline button (unchanged). TODO: `.btn-ghost`, size modifiers (`.btn-sm`, `.btn-lg`, `.btn-mini`) — deferred.
+- **Status lozenges** (`.status-lozenge`): separate from buttons, 14px DM Sans 500, `padding:8px 16px`, pill. Active states are solid-colour: New = teal `#269C9C`, Hold = rose `#9D174D`, Archived = warm-grey `#92877B` (all `#FCF9F6` text). Inactive = surface bg, muted border/text. Hover shows the target active colour. Disabled = `#C9BEB2` fill. Uses `data-lozenge` attribute for per-type hover targeting.
+- **Fonts**: Montserrat (display), DM Sans (body), DM Mono (mono). Jost removed.
 
 ## Coding Conventions
 - **State object `S`** holds all app state incl. `subCustomers` array. `render()` = full DOM rebuild.
