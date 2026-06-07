@@ -840,6 +840,16 @@ function renderForm(packet){
     gabriellePct:100-defaultPct,
   });
 
+  // -- HELPER FUNCTIONS (Closures over hdr, S, formItems) --
+  /**
+   * Clears error state from an input and hides error message.
+   * Used to provide feedback that validation has passed on retry.
+   */
+  const clearFieldError = (input, errorEl) => {
+    input.classList.remove('error');
+    errorEl.style.display = 'none';
+  };
+
   // Items loaded from Supabase for edit, or a blank card for new
   // Note: renderForm is synchronous so we pre-load items into S.editItems
   // before calling renderForm, then clear them after
@@ -1237,57 +1247,69 @@ function renderForm(packet){
   // -- SAVE LOGIC --
   // IMPORTANT: Never call render() on validation failure -- it rebuilds the DOM
   // and wipes formItems. Only manipulate existing DOM elements inline.
-  async function doSave(saveAndNew=false){
-    let ok=true;
-    let firstError=null;
+
+  /**
+   * Validates the form and displays errors inline.
+   * Returns {valid: boolean, firstError: HTMLElement or null}
+   * Handles error display without calling render() or toast()
+   */
+  function validateForm() {
+    let ok = true;
+    let firstError = null;
 
     // Validate Customer Reference
-    if(isNJ()){
+    if (isNJ()) {
       updateFullRef();
-      if(!hdr.customerRef){
-        ok=false;
+      if (!hdr.customerRef) {
+        ok = false;
         refFreeIn.classList.add('error');
-        refErr.style.display='block';
-        refErr.textContent='Reference is required';
-        if(!firstError)firstError=refFreeIn;
+        refErr.style.display = 'block';
+        refErr.textContent = 'Reference is required';
+        if (!firstError) firstError = refFreeIn;
       } else {
-        refFreeIn.classList.remove('error');refErr.style.display='none';
+        clearFieldError(refFreeIn, refErr);
       }
     } else {
-      if(!hdr.refSuffix||!/^\d{4,7}$/.test(hdr.refSuffix)){
-        ok=false;
+      if (!hdr.refSuffix || !/^\d{4,7}$/.test(hdr.refSuffix)) {
+        ok = false;
         refSufIn.classList.add('error');
-        refErr.style.display='block';
-        refErr.textContent='Enter 4-5 digits after the dash';
-        if(!firstError)firstError=refSufIn;
+        refErr.style.display = 'block';
+        refErr.textContent = 'Enter 4-5 digits after the dash';
+        if (!firstError) firstError = refSufIn;
       } else {
-        refSufIn.classList.remove('error');refErr.style.display='none';
+        clearFieldError(refSufIn, refErr);
       }
     }
 
     // Validate sub-customer (NJ only)
-    if(isNJ()&&!hdr.subCustomer){
-      ok=false;
-      const subSel=subCustFld.querySelector('select');
-      if(subSel)subSel.classList.add('error');
-      subCustErr.style.display='block';
-      if(!firstError)firstError=subCustFld.querySelector('select');
+    if (isNJ() && !hdr.subCustomer) {
+      ok = false;
+      const subSel = subCustFld.querySelector('select');
+      if (subSel) subSel.classList.add('error');
+      subCustErr.style.display = 'block';
+      if (!firstError) firstError = subCustFld.querySelector('select');
     }
 
     // Validate Surname
-    if(!hdr.surname.trim()){
-      ok=false;
+    if (!hdr.surname.trim()) {
+      ok = false;
       surIn.classList.add('error');
-      surErr.style.display='block';
-      if(!firstError)firstError=surIn;
+      surErr.style.display = 'block';
+      if (!firstError) firstError = surIn;
     } else {
-      surIn.classList.remove('error');
-      surErr.style.display='none';
+      clearFieldError(surIn, surErr);
     }
 
-    if(!ok){
+    return {valid: ok, firstError};
+  }
+
+  async function doSave(saveAndNew=false){
+    const validation = validateForm();
+    if (!validation.valid) {
       // Show errors inline only -- no render(), no toast()
-      if(firstError)firstError.scrollIntoView({behavior:'smooth',block:'center'});
+      if (validation.firstError) {
+        validation.firstError.scrollIntoView({behavior: 'smooth', block: 'center'});
+      }
       return;
     }
 
