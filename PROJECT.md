@@ -181,14 +181,15 @@ Filter: date range (defaults this month) + retailer. Groups by retailer, lists i
 
 ---
 
-## Design System (May 2026 Refresh)
+## Design System (June 2026 Refresh)
 
 ### Colours (CSS custom properties)
-- **Primary**: Gold `#CEA12B` (CTAs, gold-light `#FBF4DC`, gold-dark `#A07C22`)
-- **User buttons**: Teal `#269C9C` (Gabby active), Magenta `#B0215F` (Paula active), Mid-grey `#B9B8B8` (inactive)
-- **Text**: Deep `#2C1A17` (headings), Chocolate `#4F2E1D` (labels), Dark-grey `#828282` (body), Text-sec `#78706A` (secondary)
+- **Primary**: Gold `#CEA12B` (CTAs, var(--gold-light) `#FBF4DC`, var(--gold-dark) `#996128`)
+- **User buttons**: Teal `#269C9C` (Gabby active), Pink-700 `#B0215F` (Paula active), Mid-grey `#B9B8B8` (inactive)
+- **Text**: Deep `#2C1A17` (headings), Chocolate `#4F2E1D` (labels), Dark-grey `#828282` (body), Text-sec `#3A3229` (secondary)
 - **Neutral**: White `#FFFFFF` (canvas), Light-grey `#F8F7F7` (containers)
-- **Legacy** (kept for legacy code): Plum, Sage, Ember, Sky (with -light variants)
+- **Status colours**: Violet-700 (New), Gold-dark (Hold), Brand-neutral-600 (Archived), Pink-* (Paula), Teal-* (Gabby)
+- **Tokens**: All spacing, corner-radius, and typography use CSS custom properties (var(--space-*), var(--rounded-*), classes .h1–.h4, .para, .para-sm, etc.)
 
 ### Containers & Layout
 - **Layout**: Side nav + top bar + main content, all floating 20px-radius cards on 8px-padded white canvas
@@ -206,15 +207,16 @@ Filter: date range (defaults this month) + retailer. Groups by retailer, lists i
   - Label: Montserrat 15px 800, chocolate (dark-grey on primary)
   - Value: Montserrat 36px 800, black (white on primary)
   - Subtitle: Jost 14px 200, black (white on primary), 6px margin-top
-- **Buttons**
-  - Primary/Gold: 50px height, 20px left padding (15px if icon), 11px vertical, 20px radius, icon 12px, gap 10px
-  - Secondary: transparent bg, chocolate border, chocolate text, 6% hover tint, same dimensions as primary
-  - Small: 13px Jost, 7×14px padding
+- **Buttons** (see styles.css for current specs)
+  - Primary/Gold: min-height 40px, padding 10px var(--space-lg), 16px DM Sans Medium, var(--rounded-full) radius
+  - Secondary: same height/padding, white bg, var(--gold-dark) border/text
+  - Destructive: same dims, red background `#DC263B`
+  - Small: var(--space-xs) + var(--space-md) padding, 12px DM Sans Medium
 - **User toggle buttons**: 50×50px circles, Montserrat 36px 800, white text, 4px gap
-- **Top bar user info**: Right-aligned, name 16px Jost 200, email 12px Jost 200, 16px gap from buttons, vertically centered
+- **Top bar user info**: Right-aligned, name 16px DM Sans 200, email 12px DM Sans 200, 16px gap from buttons, vertically centered
 
 ### Fonts
-Montserrat (display/headings), Jost (body/UI), Jost (mono, fallback for code)
+Montserrat (display/headings), DM Sans (body/UI), DM Mono (code)
 
 ### Icons
 I object with SVG strings. Key: home, list, dollar, save, plus, download, edit, trash, search, back, refresh, check, alert, inbox, calendar, arrow, close, empty.

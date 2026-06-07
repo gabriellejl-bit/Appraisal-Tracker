@@ -58,7 +58,7 @@ Full project reference: `PROJECT.md` and `PROJECT-SHORT.md` — read these for D
 
 **Typography:** Utility classes `.h1`–`.h4` (headings), `.para`, `.para-lg`, `.para-sm`, `.para-mini` (body), `.caption`, `.mono`. All use DM Sans body font.
 
-**Buttons:** `.btn-primary` (gold, 42px), `.btn-secondary` (outline, 42px), `.btn-link` (text only), `.btn-destructive`, `.btn-sm` (small inline 13px). Primary text is `#FCF9F6` (off-white).
+**Buttons:** `.btn-primary` (gold, 40px min-height), `.btn-secondary` (outline, 40px), `.btn-link` (text only), `.btn-destructive`, `.btn-sm` (small inline 12px). Primary text is `#FCF9F6` (off-white).
 
 **Form fields:** Inputs/selects = white bg, no border, `--rounded-xl` (12px), `var(--space-sm)` padding. Item area selects = secondary bg (#f3f0ed), border 1px, custom SVG chevron.
 
