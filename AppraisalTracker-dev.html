@@ -401,7 +401,7 @@ const I={
   search:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
   close:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
   edit:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
-  trash:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>',
+  trash:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>',
   empty:'<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#B0A89F" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>',
   home:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>',
   list:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
@@ -515,7 +515,7 @@ function renderHome(){
   ));
 
   // Dollar value cards (user-specific)
-  const userColor=cu.slug==='gabby'?'var(--teal)':'var(--magenta)';
+  const userColor=cu.slug==='gabby'?'var(--teal)':'var(--pink-700)';
   const userLabel=cu.slug==='gabby'?'Gabby, after tax':'Paula, after tax';
   c.append(h('div',{className:'stats-row fade-up d1'},
     h('div',{className:'stat-card standard'},h('div',{className:'stat-top'},h('div',{className:'stat-label'},'Unbilled'),h('div',{className:'stat-icon',htmlContent:I.alert})),h('div',{className:'stat-value',style:{color:userColor}},fmtMoney(dollarStats.unbilled)),h('div',{className:'stat-subtitle',style:{color:userColor}},userLabel)),
@@ -795,12 +795,13 @@ function renderRecords(){
 // FORM -- NEW WORK PACKET
 //
 function renderForm(packet){
+  window.scrollTo(0,0);
   const isEdit=!!packet;
   const defaultPct=S.user==='paula'?100:0;
 
   // Guard -- if lookups not loaded yet
   if(!S.retailers.length||!S.jobTypes.length||!S.items.length){
-    const retryBtn=h('button',{className:'btn btn-secondary',style:{marginTop:'16px'},onClick:async()=>{await loadAll();render();}});
+    const retryBtn=h('button',{className:'btn btn-secondary',style:{marginTop:'var(--space-md)'},onClick:async()=>{await loadAll();render();}});
     retryBtn.innerHTML='Retry';
     return h('div',{className:'form-wrap fade-up'},
       h('h1',{className:'form-page-title'},'New Work Packet'),
@@ -880,7 +881,92 @@ function renderForm(packet){
 
   // -- HEADER SECTION --
   const headerSection=h('div',{className:'form-section'});
-  headerSection.append(h('h2',{className:'h2'},'Packet Details'));
+  if(isEdit&&packet){
+    const pBilled=packet.paula_billed||false;
+    const gBilled=packet.gabby_billed||false;
+    const curStatusName=statusName(packet.status_id);
+    const isHold=curStatusName==='Hold from Billing';
+    const isArchived=curStatusName==='Archived';
+    const billingDisabled=isHold||isArchived;
+
+    // Title row: "Packet Details" + "Delete this packet" link
+    const delBtn=h('button',{className:'btn-link-destructive',style:{padding:'0'},onClick:()=>{
+      showDeleteConfirm(async()=>{
+        const existingItems=await sbAll('packet_items','&packet_id=eq.'+packet.id)||[];
+        for(const ei of existingItems)await sbDelete('packet_items',ei.id);
+        await sbDelete('packets',packet.id);
+        await loadAll();
+        S.view='records';S.editId=null;
+        toast('Packet deleted');
+      });
+    }},'Delete this packet');
+    headerSection.append(h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'var(--space-xs) 0',marginBottom:'var(--space-lg)'}},
+      h('p',{className:'h2',style:{margin:0,padding:0}},'Packet Details'),
+      delBtn
+    ));
+
+    // Fully billed warning
+    if(pBilled&&gBilled){
+      headerSection.append(h('div',{className:'fully-billed-warning',style:{marginBottom:'var(--space-md)'}},ic('alert'),'Both users billed - changes may affect completed invoices'));
+    }
+
+    // Status row: lozenges (left) + billing flags (right)
+    const lozengeRow=h('div',{className:'status-lozenges',style:{margin:0,flexWrap:'nowrap'}});
+    const lozengeConfig=[
+      {name:'New',cls:'active-new',disabled:false},
+      {name:'Hold from Billing',cls:'active-hold',disabled:pBilled||gBilled},
+      {name:'Archived',cls:'active-archived',disabled:false},
+    ];
+    lozengeConfig.forEach(({name,cls,disabled})=>{
+      const isActive=curStatusName===name;
+      const loz=h('button',{className:'status-lozenge'+(isActive?' '+cls:'')});
+      loz.dataset.lozenge=cls;
+      loz.textContent=name==='Hold from Billing'?'Hold':name;
+      loz.title=name;
+      if(disabled&&!isActive)loz.disabled=true;
+      loz.addEventListener('click',async()=>{
+        if(isActive)return;
+        const newStatusId=statusId(name);
+        const updateData={status_id:newStatusId,modified:fmtD(new Date())};
+        if(name==='New'){updateData.paula_billed=false;updateData.gabby_billed=false;}
+        try{
+          await sbUpdate('packets',packet.id,updateData);
+          await loadAll();S.editId=packet.id;S.view='edit';renderAsync();
+        }catch(e2){showToast('Failed: '+e2.message,true);}
+      });
+      lozengeRow.append(loz);
+    });
+    const billingFlagsRow=h('div',{style:{display:'flex',gap:'var(--space-xs)',alignItems:'center'}});
+    [{label:'Paula',billedKey:'paula_billed',otherKey:'gabby_billed',otherPctField:'paula_pct'},{label:'Gabby',billedKey:'gabby_billed',otherKey:'paula_billed',otherPctField:'gabrielle_pct'}].forEach(({label,billedKey,otherKey,otherPctField})=>{
+      const isBilled=packet[billedKey]||false;
+      const unbilledClass=label==='Paula'?'unbilled-paula':'unbilled-gabby';
+      const btn=h('button',{className:'billing-flag-btn '+(isBilled?'billed':unbilledClass)});
+      btn.textContent=label+': '+(isBilled?'Billed':'Unbilled');
+      if(billingDisabled)btn.disabled=true;
+      btn.addEventListener('click',async()=>{
+        const newVal=!isBilled;
+        const updateData={[billedKey]:newVal,modified:fmtD(new Date())};
+        if(!newVal){
+          updateData.status_id=statusId('New');
+        } else {
+          const otherBilled=packet[otherKey]||false;
+          const otherNoWork=S.allPacketItems.filter(i=>i.packet_id===packet.id)
+            .every(i=>(i[otherPctField]||0)===0);
+          if(otherBilled||otherNoWork)updateData.status_id=statusId('Billed');
+        }
+        try{
+          await sbUpdate('packets',packet.id,updateData);
+          await loadAll();S.editId=packet.id;S.view='edit';renderAsync();
+        }catch(e2){showToast('Failed: '+e2.message,true);}
+      });
+      billingFlagsRow.append(btn);
+    });
+    headerSection.append(h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'var(--space-md)'}},lozengeRow,billingFlagsRow));
+    // Spacer between status row and fields (edit mode only)
+    headerSection.append(h('div',{style:{height:'var(--space-3xl)'}}));
+  } else {
+    headerSection.append(h('h2',{className:'h2'},'Packet Details'));
+  }
   const headerGrid=h('div',{className:'form-grid'});
 
   // Date (full width)
@@ -893,16 +979,16 @@ function renderForm(packet){
   const retFld=h('div',{},h('label',{className:'field-label'},'Retailer *'));
   const retSel=h('select',{className:'select-input'});
   S.retailers.forEach(r=>{const o=h('option',{value:String(r.id)},r.name);if(r.id===hdr.retailerId)o.selected=true;retSel.append(o);});
-  const prefixDisplay=h('span',{className:'ref-prefix'},pad3(S.retailers.find(r=>r.id===hdr.retailerId)?.code||0)+'-');
+  const prefixDisplay=h('span',{className:'ref-prefix'},pad3(S.retailers.find(r=>r.id===hdr.retailerId)?.code||0)+' -');
 
   // Ref fields -- standard (prefixed) vs NJ (free text)
   const refFld=h('div',{},h('label',{className:'field-label'},'Customer Reference *'));
   const refErr=h('span',{className:'error-text'},'Reference is required');
   const refWrap=h('div',{className:'ref-wrap'});
   // Standard ref suffix input (Alexandra/Queenstown)
-  const refSufIn=h('input',{type:'text',className:'input mono ref-suffix',placeholder:'',maxLength:'7',value:hdr.refSuffix,inputMode:'numeric'});
+  const refSufIn=h('input',{type:'text',className:'input ref-suffix',placeholder:'',maxLength:'7',value:hdr.refSuffix,inputMode:'numeric'});
   // NJ free-text ref input
-  const refFreeIn=h('input',{type:'text',className:'input mono',placeholder:'Enter reference',value:hdr.customerRef});
+  const refFreeIn=h('input',{type:'text',className:'input',placeholder:'Enter reference',value:hdr.customerRef});
 
   function updateFullRef(){
     if(isNJ()){
@@ -938,7 +1024,7 @@ function renderForm(packet){
   retSel.addEventListener('change',e=>{
     hdr.retailerId=parseInt(e.target.value);
     const r=S.retailers.find(x=>x.id===hdr.retailerId);
-    prefixDisplay.textContent=pad3(r?.code||0)+'-';
+    prefixDisplay.textContent=pad3(r?.code||0)+' -';
     updateFullRef();
     rebuildRefField();
     rebuildSubCustomerField();
@@ -987,106 +1073,6 @@ function renderForm(packet){
 
   headerSection.append(headerGrid);
 
-  // -- BILLING STATUS CARD (edit mode only, above Packet Details) --
-  if(isEdit&&packet){
-    const pBilled=packet.paula_billed||false;
-    const gBilled=packet.gabby_billed||false;
-    const curStatusName=statusName(packet.status_id);
-    const isHold=curStatusName==='Hold from Billing';
-    const isArchived=curStatusName==='Archived';
-    const billingDisabled=isHold||isArchived;
-
-    const billingCard=h('div',{className:'billing-status-card'});
-
-    // Card title + fully billed warning inline
-    const cardTitle=h('div',{className:'billing-status-card-title'});
-    cardTitle.append(document.createTextNode('Billing Status'));
-    if(pBilled&&gBilled){
-      const warn=h('span',{style:{fontSize:'12px',color:'var(--ember)',fontWeight:'500',fontFamily:'var(--font-body)'}});
-      warn.textContent='(!) Both users billed - changes may affect completed invoices';
-      cardTitle.append(warn);
-    }
-    billingCard.append(cardTitle);
-
-    // -- Workflow lozenges: New / Hold from Billing / Archived --
-    billingCard.append(h('div',{className:'billing-section-label'},'Workflow'));
-    const lozengeRow=h('div',{className:'status-lozenges'});
-
-    const lozengeConfig=[
-      {name:'New',cls:'active-new',disabled:false},
-      {name:'Hold from Billing',cls:'active-hold',disabled:pBilled||gBilled},
-      {name:'Archived',cls:'active-archived',disabled:false},
-    ];
-    lozengeConfig.forEach(({name,cls,disabled})=>{
-      const isActive=curStatusName===name;
-      const loz=h('button',{className:'status-lozenge'+(isActive?' '+cls:'')});
-      loz.dataset.lozenge=cls;
-      loz.textContent=name==='Hold from Billing'?'Hold':name;
-      loz.title=name;
-      if(disabled&&!isActive)loz.disabled=true;
-      loz.addEventListener('click',async()=>{
-        if(isActive)return; // already selected
-        const newStatusId=statusId(name);
-        const updateData={status_id:newStatusId,modified:fmtD(new Date())};
-        // Clicking New resets both billed flags
-        if(name==='New'){updateData.paula_billed=false;updateData.gabby_billed=false;}
-        try{
-          await sbUpdate('packets',packet.id,updateData);
-          await loadAll();S.editId=packet.id;S.view='edit';renderAsync();
-        }catch(e2){showToast('Failed: '+e2.message,true);}
-      });
-      lozengeRow.append(loz);
-    });
-    // Delete packet — inline after Archived lozenge, destructive link style
-    const delBtn=h('button',{className:'btn-link-destructive',onClick:()=>{
-      showDeleteConfirm(async()=>{
-        const existingItems=await sbAll('packet_items','&packet_id=eq.'+packet.id)||[];
-        for(const ei of existingItems)await sbDelete('packet_items',ei.id);
-        await sbDelete('packets',packet.id);
-        await loadAll();
-        S.view='records';S.editId=null;
-        toast('Packet deleted');
-      });
-    }},'Delete packet');
-    lozengeRow.append(delBtn);
-    billingCard.append(lozengeRow);
-
-    // -- Per-user billing toggles --
-    billingCard.append(h('div',{className:'billing-section-label',style:{marginTop:'12px'}},'Billed by'));
-    const usersRow=h('div',{className:'billing-users-row'});
-    [{label:'Paula',billedKey:'paula_billed',otherKey:'gabby_billed',otherPctField:'paula_pct'},{label:'Gabby',billedKey:'gabby_billed',otherKey:'paula_billed',otherPctField:'gabrielle_pct'}].forEach(({label,billedKey,otherKey,otherPctField})=>{
-      const isBilled=packet[billedKey]||false;
-      const unbilledClass=label==='Paula'?'unbilled-paula':'unbilled-gabby';
-      const btn=h('button',{className:'billing-flag-btn '+(isBilled?'billed':unbilledClass)});
-      btn.textContent=label+': '+(isBilled?'Billed':'Unbilled');
-      if(billingDisabled)btn.disabled=true;
-      btn.addEventListener('click',async()=>{
-        const newVal=!isBilled;
-        const updateData={[billedKey]:newVal,modified:fmtD(new Date())};
-        if(!newVal){
-          // Reverting to unbilled - reset status to New
-          updateData.status_id=statusId('New');
-        } else {
-          // Marking as billed - check if other user also done
-          const otherBilled=packet[otherKey]||false;
-          const otherNoWork=S.allPacketItems.filter(i=>i.packet_id===packet.id)
-            .every(i=>(i[otherPctField]||0)===0);
-          if(otherBilled||otherNoWork)updateData.status_id=statusId('Billed');
-        }
-        try{
-          await sbUpdate('packets',packet.id,updateData);
-          await loadAll();S.editId=packet.id;S.view='edit';renderAsync();
-        }catch(e2){showToast('Failed: '+e2.message,true);}
-      });
-      usersRow.append(btn);
-    });
-    billingCard.append(usersRow);
-
-
-    // Insert billing card before packet details
-    wrap.append(billingCard);
-  }
-
   wrap.append(headerSection);
 
   // -- ITEMS SECTION --
@@ -1115,7 +1101,7 @@ function renderForm(packet){
 
     // Warning if job type not found in lookup
     if(item._warning){
-      card.append(h('p',{style:{fontSize:'12px',color:'var(--ember)',marginBottom:'10px',fontFamily:'var(--font-body)'}},
+      card.append(h('p',{style:{fontSize:'12px',color:'var(--ember)',marginBottom:'var(--space-xs)',fontFamily:'var(--font-body)'}},
         '(!) '+item._warning));
     }
 
@@ -1235,7 +1221,7 @@ function renderForm(packet){
     ));
   }
 
-  const titleRow=h('div',{style:{display:'flex',alignItems:'center',gap:'12px'}});
+  const titleRow=h('div',{style:{display:'flex',alignItems:'center',gap:'var(--space-sm)'}});
   titleRow.append(h('h1',{className:'h1'},isEditTitle));
 
   const actionsDiv=h('div',{className:'form-sticky-actions'},
