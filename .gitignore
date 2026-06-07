@@ -1,0 +1,3 @@
+# Local Claude development artifacts
+.claude/worktrees/
+.claude/launch.json
