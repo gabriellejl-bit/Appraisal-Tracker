@@ -6,7 +6,7 @@
 <title>Billing Tracker</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800;900&family=Jost:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800;900&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -184,6 +184,31 @@ function showToast(m,w){
   _toastEl.textContent=m;
   _toastEl.style.display='block';
   _toastTT=setTimeout(()=>{if(_toastEl)_toastEl.style.display='none';},3000);
+}
+
+function showDeleteConfirm(onConfirm){
+  const overlay=h('div',{className:'modal-overlay',style:{alignItems:'center'},onClick:e=>{if(e.target===overlay)overlay.remove();}});
+  const modal=h('div',{className:'modal',style:{maxWidth:'440px',background:'var(--bg)'}});
+
+  const hdr=h('div',{className:'modal-header',style:{borderBottom:'none'}});
+  hdr.append(h('h1',{className:'modal-title'},'Delete Work Packet'));
+  modal.append(hdr);
+
+  const body=h('div',{className:'modal-body',style:{paddingTop:'20px',paddingBottom:'24px'}});
+  body.append(h('p',{style:{fontSize:'15px',color:'var(--text-sec)',lineHeight:'1.7'}},'This will permanently delete this packet and all its items. This action cannot be undone.'));
+  modal.append(body);
+
+  const foot=h('div',{className:'modal-footer',style:{borderTop:'none'}});
+  const cancelBtn=h('button',{className:'btn btn-secondary',onClick:()=>overlay.remove()},'Cancel');
+  const deleteBtn=h('button',{className:'btn btn-destructive',onClick:async()=>{
+    deleteBtn.disabled=true;deleteBtn.textContent='Deleting...';
+    try{await onConfirm();}
+    catch(e){showToast('Delete failed: '+e.message,true);deleteBtn.disabled=false;deleteBtn.textContent='Delete';}
+  }},'Delete');
+  foot.append(cancelBtn,h('div',{className:'modal-footer-right'},deleteBtn));
+  modal.append(foot);
+  overlay.append(modal);
+  document.body.append(overlay);
 }
 
 async function loadAll(){
@@ -376,7 +401,7 @@ const I={
   search:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
   close:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
   edit:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
-  trash:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>',
+  trash:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>',
   empty:'<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#B0A89F" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>',
   home:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>',
   list:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
@@ -412,7 +437,7 @@ function renderNav(){
   });
   const toggle=h('div',{className:'user-toggle'},toggleBtns,userInfo);
   const isReportsView=['reports','customerReport','billingRunsReport'].includes(S.view);
-  const newBtn=h('button',{className:'btn btn-gold has-icon',style:{justifySelf:'start'},onClick:()=>{S.view='form';render();}},h('span',{htmlContent:'<svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4.36134 12V0H7.61344V12H4.36134ZM0 7.58442V4.41559H12V7.58442H0Z" fill="white"/></svg>',style:{display:'inline-flex',alignItems:'center'}}),'NEW PACKET');
+  const newBtn=h('button',{className:'btn btn-primary has-icon',style:{justifySelf:'start'},onClick:()=>{S.view='form';render();}},h('span',{htmlContent:'<svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4.36134 12V0H7.61344V12H4.36134ZM0 7.58442V4.41559H12V7.58442H0Z" fill="white"/></svg>',style:{display:'inline-flex',alignItems:'center'}}),'NEW PACKET');
   const isOnline=S.online;
 
   // Side nav
@@ -452,7 +477,7 @@ function renderNav(){
       h('span',{className:'nav-dot'+(isOnline?'':' off')}),
       h('div',{},
         h('div',{className:'nav-status-text'},isOnline?'Connected':'Offline'),
-        h('div',{className:'nav-status-env'},'Dev')
+        h('div',{className:'nav-status-env'},SB_URL.includes('xwripwrfqdddfomzfjaq')?'Dev':'Prod')
       )
     )
   );
@@ -490,7 +515,7 @@ function renderHome(){
   ));
 
   // Dollar value cards (user-specific)
-  const userColor=cu.slug==='gabby'?'var(--teal)':'var(--magenta)';
+  const userColor=cu.slug==='gabby'?'var(--teal)':'var(--pink-700)';
   const userLabel=cu.slug==='gabby'?'Gabby, after tax':'Paula, after tax';
   c.append(h('div',{className:'stats-row fade-up d1'},
     h('div',{className:'stat-card standard'},h('div',{className:'stat-top'},h('div',{className:'stat-label'},'Unbilled'),h('div',{className:'stat-icon',htmlContent:I.alert})),h('div',{className:'stat-value',style:{color:userColor}},fmtMoney(dollarStats.unbilled)),h('div',{className:'stat-subtitle',style:{color:userColor}},userLabel)),
@@ -628,7 +653,7 @@ function renderRecords(){
   ));
 
   // Filter bar
-  const fb=h('div',{style:{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'var(--radius-lg)',padding:'16px 20px',marginBottom:'16px',display:'flex',flexWrap:'wrap',gap:'16px',alignItems:'flex-start'}});
+  const fb=h('div',{style:{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'var(--rounded-3xl)',padding:'16px 20px',marginBottom:'16px',display:'flex',flexWrap:'wrap',gap:'16px',alignItems:'flex-start'}});
 
   // Search
   const sWrap=h('div',{style:{position:'relative',flex:'2',minWidth:'180px'}});
@@ -702,12 +727,12 @@ function renderRecords(){
 
   // Batch toolbar
   if(selCount>0){
-    const bb=h('div',{style:{background:'var(--gold-light)',border:'1px solid var(--gold)',borderRadius:'var(--radius)',padding:'10px 16px',marginBottom:'12px',display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}});
+    const bb=h('div',{style:{background:'var(--gold-light)',border:'1px solid var(--gold)',borderRadius:'var(--rounded-lg)',padding:'10px 16px',marginBottom:'12px',display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}});
     bb.append(h('span',{style:{fontSize:'13.5px',fontWeight:'600',color:'var(--deep)',flex:'1'}},selCount+' packet'+(selCount!==1?'s':'')+' selected'));
     const sd=h('select',{className:'select-input',style:{width:'200px'}});
     sd.append(h('option',{value:''},'Change status to...'));
     S.billingStatuses.forEach(s=>sd.append(h('option',{value:String(s.id)},s.name)));
-    const ab=h('button',{className:'btn btn-primary',onClick:async()=>{
+    const ab=h('button',{className:'btn btn-primary btn-sm',onClick:async()=>{
       const nid=parseInt(sd.value);
       if(!nid){showToast('Select a status first',true);return;}
       ab.disabled=true;ab.textContent='Updating...';
@@ -770,12 +795,13 @@ function renderRecords(){
 // FORM -- NEW WORK PACKET
 //
 function renderForm(packet){
+  window.scrollTo(0,0);
   const isEdit=!!packet;
   const defaultPct=S.user==='paula'?100:0;
 
   // Guard -- if lookups not loaded yet
   if(!S.retailers.length||!S.jobTypes.length||!S.items.length){
-    const retryBtn=h('button',{className:'btn btn-secondary',style:{marginTop:'16px'},onClick:async()=>{await loadAll();render();}});
+    const retryBtn=h('button',{className:'btn btn-secondary',style:{marginTop:'var(--space-md)'},onClick:async()=>{await loadAll();render();}});
     retryBtn.innerHTML='Retry';
     return h('div',{className:'form-wrap fade-up'},
       h('h1',{className:'form-page-title'},'New Work Packet'),
@@ -814,6 +840,16 @@ function renderForm(packet){
     gabriellePct:100-defaultPct,
   });
 
+  // -- HELPER FUNCTIONS (Closures over hdr, S, formItems) --
+  /**
+   * Clears error state from an input and hides error message.
+   * Used to provide feedback that validation has passed on retry.
+   */
+  const clearFieldError = (input, errorEl) => {
+    input.classList.remove('error');
+    errorEl.style.display = 'none';
+  };
+
   // Items loaded from Supabase for edit, or a blank card for new
   // Note: renderForm is synchronous so we pre-load items into S.editItems
   // before calling renderForm, then clear them after
@@ -848,14 +884,99 @@ function renderForm(packet){
   }
 
   // -- STICKY FORM HEADER --
-  const isEditTitle=isEdit?'Edit Work Packet':'New Work Packet';
+  const isEditTitle=isEdit?'Edit Packet':'New Packet';
 
   // -- WRAP --
   const wrap=h('div',{className:'form-wrap fade-up'});
 
   // -- HEADER SECTION --
   const headerSection=h('div',{className:'form-section'});
-  headerSection.append(h('div',{className:'form-section-title'},'Packet Details'));
+  if(isEdit&&packet){
+    const pBilled=packet.paula_billed||false;
+    const gBilled=packet.gabby_billed||false;
+    const curStatusName=statusName(packet.status_id);
+    const isHold=curStatusName==='Hold from Billing';
+    const isArchived=curStatusName==='Archived';
+    const billingDisabled=isHold||isArchived;
+
+    // Title row: "Packet Details" + "Delete this packet" link
+    const delBtn=h('button',{className:'btn-link-destructive',style:{padding:'0'},onClick:()=>{
+      showDeleteConfirm(async()=>{
+        const existingItems=await sbAll('packet_items','&packet_id=eq.'+packet.id)||[];
+        for(const ei of existingItems)await sbDelete('packet_items',ei.id);
+        await sbDelete('packets',packet.id);
+        await loadAll();
+        S.view='records';S.editId=null;
+        toast('Packet deleted');
+      });
+    }},'Delete this packet');
+    headerSection.append(h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'var(--space-xs) 0',marginBottom:'var(--space-lg)'}},
+      h('p',{className:'h2',style:{margin:0,padding:0}},'Packet Details'),
+      delBtn
+    ));
+
+    // Fully billed warning
+    if(pBilled&&gBilled){
+      headerSection.append(h('div',{className:'fully-billed-warning',style:{marginBottom:'var(--space-md)'}},ic('alert'),'Both users billed - changes may affect completed invoices'));
+    }
+
+    // Status row: lozenges (left) + billing flags (right)
+    const lozengeRow=h('div',{className:'status-lozenges',style:{margin:0,flexWrap:'nowrap'}});
+    const lozengeConfig=[
+      {name:'New',cls:'active-new',disabled:false},
+      {name:'Hold from Billing',cls:'active-hold',disabled:pBilled||gBilled},
+      {name:'Archived',cls:'active-archived',disabled:false},
+    ];
+    lozengeConfig.forEach(({name,cls,disabled})=>{
+      const isActive=curStatusName===name;
+      const loz=h('button',{className:'status-lozenge'+(isActive?' '+cls:'')});
+      loz.dataset.lozenge=cls;
+      loz.textContent=name==='Hold from Billing'?'Hold':name;
+      loz.title=name;
+      if(disabled&&!isActive)loz.disabled=true;
+      loz.addEventListener('click',async()=>{
+        if(isActive)return;
+        const newStatusId=statusId(name);
+        const updateData={status_id:newStatusId,modified:fmtD(new Date())};
+        if(name==='New'){updateData.paula_billed=false;updateData.gabby_billed=false;}
+        try{
+          await sbUpdate('packets',packet.id,updateData);
+          await loadAll();S.editId=packet.id;S.view='edit';renderAsync();
+        }catch(e2){showToast('Failed: '+e2.message,true);}
+      });
+      lozengeRow.append(loz);
+    });
+    const billingFlagsRow=h('div',{style:{display:'flex',gap:'var(--space-xs)',alignItems:'center'}});
+    [{label:'Paula',billedKey:'paula_billed',otherKey:'gabby_billed',otherPctField:'paula_pct'},{label:'Gabby',billedKey:'gabby_billed',otherKey:'paula_billed',otherPctField:'gabrielle_pct'}].forEach(({label,billedKey,otherKey,otherPctField})=>{
+      const isBilled=packet[billedKey]||false;
+      const unbilledClass=label==='Paula'?'unbilled-paula':'unbilled-gabby';
+      const btn=h('button',{className:'billing-flag-btn '+(isBilled?'billed':unbilledClass)});
+      btn.textContent=label+': '+(isBilled?'Billed':'Unbilled');
+      if(billingDisabled)btn.disabled=true;
+      btn.addEventListener('click',async()=>{
+        const newVal=!isBilled;
+        const updateData={[billedKey]:newVal,modified:fmtD(new Date())};
+        if(!newVal){
+          updateData.status_id=statusId('New');
+        } else {
+          const otherBilled=packet[otherKey]||false;
+          const otherNoWork=S.allPacketItems.filter(i=>i.packet_id===packet.id)
+            .every(i=>(i[otherPctField]||0)===0);
+          if(otherBilled||otherNoWork)updateData.status_id=statusId('Billed');
+        }
+        try{
+          await sbUpdate('packets',packet.id,updateData);
+          await loadAll();S.editId=packet.id;S.view='edit';renderAsync();
+        }catch(e2){showToast('Failed: '+e2.message,true);}
+      });
+      billingFlagsRow.append(btn);
+    });
+    headerSection.append(h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'var(--space-md)'}},lozengeRow,billingFlagsRow));
+    // Spacer between status row and fields (edit mode only)
+    headerSection.append(h('div',{style:{height:'var(--space-3xl)'}}));
+  } else {
+    headerSection.append(h('h2',{className:'h2'},'Packet Details'));
+  }
   const headerGrid=h('div',{className:'form-grid'});
 
   // Date (full width)
@@ -868,16 +989,16 @@ function renderForm(packet){
   const retFld=h('div',{},h('label',{className:'field-label'},'Retailer *'));
   const retSel=h('select',{className:'select-input'});
   S.retailers.forEach(r=>{const o=h('option',{value:String(r.id)},r.name);if(r.id===hdr.retailerId)o.selected=true;retSel.append(o);});
-  const prefixDisplay=h('span',{className:'ref-prefix'},pad3(S.retailers.find(r=>r.id===hdr.retailerId)?.code||0)+'-');
+  const prefixDisplay=h('span',{className:'ref-prefix'},pad3(S.retailers.find(r=>r.id===hdr.retailerId)?.code||0)+' -');
 
   // Ref fields -- standard (prefixed) vs NJ (free text)
   const refFld=h('div',{},h('label',{className:'field-label'},'Customer Reference *'));
   const refErr=h('span',{className:'error-text'},'Reference is required');
   const refWrap=h('div',{className:'ref-wrap'});
   // Standard ref suffix input (Alexandra/Queenstown)
-  const refSufIn=h('input',{type:'text',className:'input mono ref-suffix',placeholder:'',maxLength:'7',value:hdr.refSuffix,inputMode:'numeric'});
+  const refSufIn=h('input',{type:'text',className:'input ref-suffix',placeholder:'',maxLength:'7',value:hdr.refSuffix,inputMode:'numeric'});
   // NJ free-text ref input
-  const refFreeIn=h('input',{type:'text',className:'input mono',placeholder:'Enter reference',value:hdr.customerRef});
+  const refFreeIn=h('input',{type:'text',className:'input',placeholder:'Enter reference',value:hdr.customerRef});
 
   function updateFullRef(){
     if(isNJ()){
@@ -913,7 +1034,7 @@ function renderForm(packet){
   retSel.addEventListener('change',e=>{
     hdr.retailerId=parseInt(e.target.value);
     const r=S.retailers.find(x=>x.id===hdr.retailerId);
-    prefixDisplay.textContent=pad3(r?.code||0)+'-';
+    prefixDisplay.textContent=pad3(r?.code||0)+' -';
     updateFullRef();
     rebuildRefField();
     rebuildSubCustomerField();
@@ -926,7 +1047,8 @@ function renderForm(packet){
   const subCustErr=h('span',{className:'error-text'},'Sub-customer is required for Nationwide Jewellers');
   function buildSubCustomerField(){
     subCustFld.innerHTML='';
-    if(!isNJ())return;
+    if(!isNJ()){subCustFld.style.display='none';return;}
+    subCustFld.style.display='';
     subCustFld.append(h('label',{className:'field-label'},'Sub-customer *'));
     const sel=h('select',{className:'select-input'});
     sel.append(h('option',{value:''},'-- Select sub-customer --'));
@@ -961,111 +1083,10 @@ function renderForm(packet){
 
   headerSection.append(headerGrid);
 
-  // -- BILLING STATUS CARD (edit mode only, above Packet Details) --
-  if(isEdit&&packet){
-    const pBilled=packet.paula_billed||false;
-    const gBilled=packet.gabby_billed||false;
-    const curStatusName=statusName(packet.status_id);
-    const isHold=curStatusName==='Hold from Billing';
-    const isArchived=curStatusName==='Archived';
-    const billingDisabled=isHold||isArchived;
-
-    const billingCard=h('div',{className:'billing-status-card'});
-
-    // Card title + fully billed warning inline
-    const cardTitle=h('div',{className:'billing-status-card-title'});
-    cardTitle.append(document.createTextNode('Billing Status'));
-    if(pBilled&&gBilled){
-      const warn=h('span',{style:{fontSize:'12px',color:'var(--ember)',fontWeight:'500',fontFamily:'var(--font-body)'}});
-      warn.textContent='(!) Both users billed - changes may affect completed invoices';
-      cardTitle.append(warn);
-    }
-    billingCard.append(cardTitle);
-
-    // -- Workflow lozenges: New / Hold from Billing / Archived --
-    billingCard.append(h('div',{className:'billing-section-label'},'Workflow'));
-    const lozengeRow=h('div',{className:'status-lozenges'});
-
-    const lozengeConfig=[
-      {name:'New',cls:'active-new',disabled:false},
-      {name:'Hold from Billing',cls:'active-hold',disabled:pBilled||gBilled},
-      {name:'Archived',cls:'active-archived',disabled:false},
-    ];
-    lozengeConfig.forEach(({name,cls,disabled})=>{
-      const isActive=curStatusName===name;
-      const loz=h('button',{className:'status-lozenge'+(isActive?' '+cls:'')});
-      loz.textContent=name==='Hold from Billing'?'Hold':name;
-      loz.title=name;
-      if(disabled&&!isActive)loz.disabled=true;
-      loz.addEventListener('click',async()=>{
-        if(isActive)return; // already selected
-        const newStatusId=statusId(name);
-        const updateData={status_id:newStatusId,modified:fmtD(new Date())};
-        // Clicking New resets both billed flags
-        if(name==='New'){updateData.paula_billed=false;updateData.gabby_billed=false;}
-        try{
-          await sbUpdate('packets',packet.id,updateData);
-          await loadAll();S.editId=packet.id;S.view='edit';renderAsync();
-        }catch(e2){showToast('Failed: '+e2.message,true);}
-      });
-      lozengeRow.append(loz);
-    });
-    billingCard.append(lozengeRow);
-
-    // -- Per-user billing toggles --
-    billingCard.append(h('div',{className:'billing-section-label',style:{marginTop:'12px'}},'Billed by'));
-    const usersRow=h('div',{className:'billing-users-row'});
-    [{label:'Paula',billedKey:'paula_billed',otherKey:'gabby_billed',otherPctField:'paula_pct'},{label:'Gabby',billedKey:'gabby_billed',otherKey:'paula_billed',otherPctField:'gabrielle_pct'}].forEach(({label,billedKey,otherKey,otherPctField})=>{
-      const isBilled=packet[billedKey]||false;
-      const btn=h('button',{className:'billing-flag-btn '+(isBilled?'billed':'unbilled')});
-      btn.textContent=label+': '+(isBilled?'Billed':'Unbilled');
-      if(billingDisabled)btn.disabled=true;
-      btn.addEventListener('click',async()=>{
-        const newVal=!isBilled;
-        const updateData={[billedKey]:newVal,modified:fmtD(new Date())};
-        if(!newVal){
-          // Reverting to unbilled - reset status to New
-          updateData.status_id=statusId('New');
-        } else {
-          // Marking as billed - check if other user also done
-          const otherBilled=packet[otherKey]||false;
-          const otherNoWork=S.allPacketItems.filter(i=>i.packet_id===packet.id)
-            .every(i=>(i[otherPctField]||0)===0);
-          if(otherBilled||otherNoWork)updateData.status_id=statusId('Billed');
-        }
-        try{
-          await sbUpdate('packets',packet.id,updateData);
-          await loadAll();S.editId=packet.id;S.view='edit';renderAsync();
-        }catch(e2){showToast('Failed: '+e2.message,true);}
-      });
-      usersRow.append(btn);
-    });
-    billingCard.append(usersRow);
-
-    // -- Delete packet button --
-    const delBtn=h('button',{className:'delete-packet-btn',style:{marginTop:'16px',display:'block'},onClick:async()=>{
-      if(!confirm('Delete this packet and all its items? This cannot be undone.'))return;
-      try{
-        // Delete packet_items first, then packet
-        const existingItems=await sbAll('packet_items','&packet_id=eq.'+packet.id)||[];
-        for(const ei of existingItems)await sbDelete('packet_items',ei.id);
-        await sbDelete('packets',packet.id);
-        await loadAll();
-        S.view='records';S.editId=null;
-        toast('Packet deleted');
-      }catch(e2){showToast('Delete failed: '+e2.message,true);}
-    }},'Delete this packet');
-    billingCard.append(delBtn);
-
-    // Insert billing card before packet details
-    wrap.append(billingCard);
-  }
-
   wrap.append(headerSection);
 
   // -- ITEMS SECTION --
-  const itemsSection=h('div',{className:'form-section'});
-  itemsSection.append(h('div',{className:'form-section-title'},'Items'));
+  const itemsSection=h('div',{style:{display:'flex',flexDirection:'column',gap:'var(--space-xl)'}});
   const itemsStack=h('div',{className:'items-stack'});
 
   function buildItemCard(item,index){
@@ -1073,7 +1094,7 @@ function renderForm(packet){
 
     // Card header
     const cardHdr=h('div',{className:'item-card-header'});
-    cardHdr.append(h('span',{className:'item-card-num'},'Item '+(index+1)));
+    cardHdr.append(h('h4',{className:'h4'},'Item '+(index+1)));
     // Always show remove button in edit mode; in new mode only when >1 item
     if(isEdit||formItems.length>1){
       const rmBtn=h('button',{className:'item-card-remove',title:'Remove item',onClick:async()=>{
@@ -1090,11 +1111,11 @@ function renderForm(packet){
 
     // Warning if job type not found in lookup
     if(item._warning){
-      card.append(h('p',{style:{fontSize:'12px',color:'var(--ember)',marginBottom:'10px',fontFamily:'var(--font-body)'}},
+      card.append(h('p',{style:{fontSize:'12px',color:'var(--ember)',marginBottom:'var(--space-xs)',fontFamily:'var(--font-body)'}},
         '(!) '+item._warning));
     }
 
-    // Item + Job Type row
+    // Item + Job Type + Cost row
     const topGrid=h('div',{className:'item-card-grid'});
 
     // Item dropdown
@@ -1108,34 +1129,34 @@ function renderForm(packet){
     const jtFld=h('div',{},h('label',{className:'field-label'},'Job Type'));
     const jtSel=h('select',{className:'select-input'});
     S.jobTypes.forEach(jt=>{const o=h('option',{value:String(jt.id)},jt.name);if(jt.id===item.jobTypeId)o.selected=true;jtSel.append(o);});
-    const costIn=h('input',{type:'number',className:'input mono cost-input',step:'5',min:'0',value:item.cost?item.cost.toFixed(2):''});
+    const costIn=h('input',{type:'number',className:'input cost-input',step:'5',min:'0',value:item.cost?item.cost.toFixed(2):''});
     jtSel.addEventListener('change',e=>{
       item.jobTypeId=parseInt(e.target.value);
       item.cost=jobTypeCost(item.jobTypeId);
       costIn.value=item.cost.toFixed(2);
     });
     jtFld.append(jtSel);topGrid.append(jtFld);
-    card.append(topGrid);
 
-    // Cost + Split row
-    const bottomRow=h('div',{className:'item-card-bottom'});
-
-    // Cost
-    const costFld=h('div',{},h('label',{className:'field-label'},'Cost'));
+    // Cost field
+    const costFld=h('div',{style:{textAlign:'right'}},h('label',{className:'field-label'},'Cost'));
     const costWrap=h('div',{className:'cost-wrap'});
     costWrap.append(h('span',{className:'cost-symbol'},'$'),costIn);
     costIn.addEventListener('input',e=>{item.cost=parseFloat(e.target.value)||0;});
-    costFld.append(costWrap);bottomRow.append(costFld);
+    costFld.append(costWrap);topGrid.append(costFld);
+    card.append(topGrid);
+
+    // Split row
+    const bottomRow=h('div',{className:'item-card-bottom'});
 
     // Work Split -- MUI-style continuous slider
     // Slider value = Paula's %, left = Paula, right = Gabby
     // Dragging left increases Paula, dragging right increases Gabby
-    const splitFld=h('div',{},h('label',{className:'field-label'},'Work Split'));
+    const splitFld=h('div',{});
     const splitWrap=h('div',{className:'split-wrap'});
 
     // Slider value = Gabby's %. Far right = 100% Gabby, far left = 100% Paula.
-    const paulaPctLbl=h('span',{className:'split-pct'},item.paulaPct+'%');
-    const gabbyPctLbl=h('span',{className:'split-pct'},item.gabriellePct+'%');
+    const paulaPctLbl=h('span',{className:'para-lg'},item.paulaPct+'%');
+    const gabbyPctLbl=h('span',{className:'para-lg'},item.gabriellePct+'%');
     // Track fill grows from left as Gabby's % increases -- thumb position = Gabby%
     const trackFill=h('div',{className:'split-track-fill',style:{width:item.gabriellePct+'%'}});
     const thumbWrap=h('div',{className:'split-thumb-wrap',style:{left:item.gabriellePct+'%'}},h('div',{className:'split-thumb'}));
@@ -1157,8 +1178,8 @@ function renderForm(packet){
 
     splitWrap.append(
       h('div',{className:'split-names'},
-        h('span',{className:'split-name'},'<< Paula'),
-        h('span',{className:'split-name'},'Gabby >>'),
+        h('span',{className:'field-label'},'Paula'),
+        h('span',{className:'field-label'},'Gabby'),
       ),
       sliderIn,
       h('div',{className:'split-pcts'},paulaPctLbl,gabbyPctLbl),
@@ -1169,8 +1190,7 @@ function renderForm(packet){
   }
 
   // Add item button -- declared BEFORE rebuildItemsStack so it's in scope
-  const addItemBtn=h('button',{className:'add-item-btn',onClick:()=>{
-    if(formItems.length>=3)return;
+  const addItemBtn=h('button',{className:'btn btn-secondary',style:{width:'100%',justifyContent:'center'},onClick:()=>{
     formItems.push(makeItem());
     rebuildItemsStack();
   }});
@@ -1179,7 +1199,7 @@ function renderForm(packet){
   function rebuildItemsStack(){
     itemsStack.innerHTML='';
     formItems.forEach((item,i)=>itemsStack.append(buildItemCard(item,i)));
-    addItemBtn.style.display=formItems.length>=3?'none':'flex';
+    addItemBtn.style.display='flex';
   }
 
   rebuildItemsStack();
@@ -1188,107 +1208,117 @@ function renderForm(packet){
   wrap.append(itemsSection);
 
   // -- STICKY HEADER -- declared first so saveBtn is in scope for doSave --
-  const saveBtn=h('button',{className:'btn btn-primary split-btn-main'});
+  const saveBtn=h('button',{className:isEdit?'btn btn-primary':'btn btn-secondary'});
   saveBtn.textContent='Save';
 
-  // Split button dropdown
-  const dropdown=h('div',{className:'split-btn-dropdown'});
-  const saveNewOpt=h('button',{className:'split-btn-option',onClick:async()=>{
-    dropdown.classList.remove('open');
-    await doSave(true); // pass flag to open fresh form after save
-  }},'Save and Add New');
-  dropdown.append(saveNewOpt);
+  const saveAndNewBtn=isEdit?null:h('button',{className:'btn btn-primary',onClick:async()=>{ await doSave(true); }});
+  if(saveAndNewBtn) saveAndNewBtn.textContent='Save and Add New';
+  let saveBtnBottom=null,saveAndNewBtnBottom=null;
 
-  const arrowBtn=h('button',{className:'btn btn-primary split-btn-arrow',onClick:e=>{
-    e.stopPropagation();
-    dropdown.classList.toggle('open');
-  }});
-  arrowBtn.innerHTML='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>';
-
-  // Close dropdown on outside click
-  document.addEventListener('click',()=>dropdown.classList.remove('open'),{capture:true,once:false});
-
-  const splitBtnWrap=h('div',{className:'split-btn-wrap'},saveBtn,arrowBtn,dropdown);
-
-  // Status badge for edit mode
-  const titleRow=h('div',{style:{display:'flex',alignItems:'center',gap:'12px'}});
-  titleRow.append(h('span',{className:'form-sticky-title'},isEditTitle));
-  if(isEdit&&packet){
-    const bl=packetBillingLabel(packet);
-    const sn=bl||statusName(packet.status_id);
-    const badge=h('span',{className:'badge',style:statusBadgeStyle(sn)},sn);
-    titleRow.append(badge);
+  if(!isEdit){
+    saveBtnBottom=h('button',{className:'btn btn-secondary',onClick:()=>doSave(false)},'Save');
+    saveAndNewBtnBottom=h('button',{className:'btn btn-primary',onClick:()=>doSave(true)},'Save and Add New');
+    wrap.append(h('div',{className:'form-bottom-actions'},
+      h('button',{className:'btn btn-link',onClick:()=>{S.view='home';S.editId=null;render();}},'Cancel'),
+      saveBtnBottom,
+      saveAndNewBtnBottom,
+    ));
+  } else {
+    saveBtnBottom=h('button',{className:'btn btn-primary',onClick:()=>doSave(false)},'Save');
+    wrap.append(h('div',{className:'form-bottom-actions'},
+      h('button',{className:'btn btn-link',onClick:()=>{S.view='home';S.editId=null;render();}},'Cancel'),
+      saveBtnBottom,
+    ));
   }
 
+  const titleRow=h('div',{style:{display:'flex',alignItems:'center',gap:'var(--space-sm)'}});
+  titleRow.append(h('h1',{className:'h1'},isEditTitle));
+
+  const actionsDiv=h('div',{className:'form-sticky-actions'},
+    h('button',{className:'btn btn-link',onClick:()=>{S.view='home';S.editId=null;render();}},'Cancel'),
+    saveBtn,
+  );
+  if(saveAndNewBtn) actionsDiv.append(saveAndNewBtn);
+
   const stickyHdr=h('div',{className:'form-sticky-header'},
-    titleRow,
-    h('div',{className:'form-sticky-actions'},
-      h('button',{className:'btn btn-secondary',onClick:()=>{S.view='home';S.editId=null;render();}},'Cancel'),
-      splitBtnWrap,
-    ),
+    h('div',{className:'form-sticky-inner'},titleRow,actionsDiv),
   );
 
   // -- SAVE LOGIC --
   // IMPORTANT: Never call render() on validation failure -- it rebuilds the DOM
   // and wipes formItems. Only manipulate existing DOM elements inline.
-  async function doSave(saveAndNew=false){
-    let ok=true;
-    let firstError=null;
+
+  /**
+   * Validates the form and displays errors inline.
+   * Returns {valid: boolean, firstError: HTMLElement or null}
+   * Handles error display without calling render() or toast()
+   */
+  function validateForm() {
+    let ok = true;
+    let firstError = null;
 
     // Validate Customer Reference
-    if(isNJ()){
+    if (isNJ()) {
       updateFullRef();
-      if(!hdr.customerRef){
-        ok=false;
+      if (!hdr.customerRef) {
+        ok = false;
         refFreeIn.classList.add('error');
-        refErr.style.display='block';
-        refErr.textContent='Reference is required';
-        if(!firstError)firstError=refFreeIn;
+        refErr.style.display = 'block';
+        refErr.textContent = 'Reference is required';
+        if (!firstError) firstError = refFreeIn;
       } else {
-        refFreeIn.classList.remove('error');refErr.style.display='none';
+        clearFieldError(refFreeIn, refErr);
       }
     } else {
-      if(!hdr.refSuffix||!/^\d{4,7}$/.test(hdr.refSuffix)){
-        ok=false;
+      if (!hdr.refSuffix || !/^\d{4,7}$/.test(hdr.refSuffix)) {
+        ok = false;
         refSufIn.classList.add('error');
-        refErr.style.display='block';
-        refErr.textContent='Enter 4-5 digits after the dash';
-        if(!firstError)firstError=refSufIn;
+        refErr.style.display = 'block';
+        refErr.textContent = 'Enter 4-5 digits after the dash';
+        if (!firstError) firstError = refSufIn;
       } else {
-        refSufIn.classList.remove('error');refErr.style.display='none';
+        clearFieldError(refSufIn, refErr);
       }
     }
 
     // Validate sub-customer (NJ only)
-    if(isNJ()&&!hdr.subCustomer){
-      ok=false;
-      const subSel=subCustFld.querySelector('select');
-      if(subSel)subSel.classList.add('error');
-      subCustErr.style.display='block';
-      if(!firstError)firstError=subCustFld.querySelector('select');
+    if (isNJ() && !hdr.subCustomer) {
+      ok = false;
+      const subSel = subCustFld.querySelector('select');
+      if (subSel) subSel.classList.add('error');
+      subCustErr.style.display = 'block';
+      if (!firstError) firstError = subCustFld.querySelector('select');
     }
 
     // Validate Surname
-    if(!hdr.surname.trim()){
-      ok=false;
+    if (!hdr.surname.trim()) {
+      ok = false;
       surIn.classList.add('error');
-      surErr.style.display='block';
-      if(!firstError)firstError=surIn;
+      surErr.style.display = 'block';
+      if (!firstError) firstError = surIn;
     } else {
-      surIn.classList.remove('error');
-      surErr.style.display='none';
+      clearFieldError(surIn, surErr);
     }
 
-    if(!ok){
+    return {valid: ok, firstError};
+  }
+
+  async function doSave(saveAndNew=false){
+    const validation = validateForm();
+    if (!validation.valid) {
       // Show errors inline only -- no render(), no toast()
-      if(firstError)firstError.scrollIntoView({behavior:'smooth',block:'center'});
+      if (validation.firstError) {
+        validation.firstError.scrollIntoView({behavior: 'smooth', block: 'center'});
+      }
       return;
     }
 
     // All valid -- call server
     updateFullRef();
     saveBtn.disabled=true;
-    arrowBtn.disabled=true;
+    if(saveAndNewBtn)saveAndNewBtn.disabled=true;
+    if(saveBtnBottom)saveBtnBottom.disabled=true;
+    if(saveAndNewBtnBottom)saveAndNewBtnBottom.disabled=true;
     saveBtn.textContent='Saving...';
     try{
       if(isEdit)await updatePacket(packet.id,hdr,formItems);
@@ -1304,7 +1334,9 @@ function renderForm(packet){
     }catch(e){
       showToast('Save failed: '+e.message,true);
       saveBtn.disabled=false;
-      arrowBtn.disabled=false;
+      if(saveAndNewBtn)saveAndNewBtn.disabled=false;
+      if(saveBtnBottom)saveBtnBottom.disabled=false;
+      if(saveAndNewBtnBottom)saveAndNewBtnBottom.disabled=false;
       saveBtn.textContent='Save';
     }
   }
@@ -1428,7 +1460,7 @@ function renderBillingStep1(){
   ));
 
   // Filters
-  const fb=h('div',{style:{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'var(--radius-lg)',padding:'16px 20px',marginBottom:'16px',display:'flex',flexWrap:'wrap',gap:'16px',alignItems:'flex-start'}});
+  const fb=h('div',{style:{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'var(--rounded-3xl)',padding:'16px 20px',marginBottom:'16px',display:'flex',flexWrap:'wrap',gap:'16px',alignItems:'flex-start'}});
 
   // Status pills
   const stWrap=h('div',{style:{display:'flex',flexDirection:'column',gap:'6px'}});
@@ -1526,7 +1558,7 @@ function renderBillingStep1(){
     h('span',{style:{fontSize:'13px',color:'var(--text-muted)'}},selCount+' item'+(selCount!==1?'s':'')+' selected'),
     h('div',{style:{display:'flex',gap:'10px'}},
       h('button',{className:'btn btn-secondary',onClick:()=>{S.view='home';render();}},'Cancel'),
-      h('button',{className:'btn btn-gold',onClick:()=>{
+      h('button',{className:'btn btn-primary',onClick:()=>{
         if(b.selectedItemIds.size===0){showToast('No items selected',true);return;}
         // Work out which retailers have selected items, in order
         const retIds=[];
@@ -1782,7 +1814,7 @@ function renderBillingStep3(){
     const card=h('div',{className:'panel',style:{marginBottom:'16px'}});
     card.append(h('div',{className:'panel-header'},
       h('span',{className:'panel-title'},retName),
-      h('button',{className:'btn btn-primary',style:{padding:'7px 16px',fontSize:'13px'},onClick:()=>{
+      h('button',{className:'btn btn-primary btn-sm',onClick:()=>{
         downloadTextAsPDF(pdfText,'billing_'+retName.toLowerCase().replace(/\s/g,'_')+'_'+new Date().toISOString().slice(0,10)+'.pdf');
       }},ic('download'),'Download PDF'),
     ));
@@ -1809,7 +1841,7 @@ function renderBillingStep3(){
     h('button',{className:'btn btn-secondary',onClick:()=>{b.retailerIdx=b.retailers.length-1;b.step=2;render();}},ic('back'),'Back'),
     h('div',{style:{display:'flex',gap:'10px'}},
       h('button',{className:'btn btn-secondary',onClick:()=>{S.view='home';b.step=0;render();}},'Cancel'),
-      h('button',{className:'btn btn-gold',onClick:()=>{b.step=4;render();}},'Confirm + Mark as Billed'),
+      h('button',{className:'btn btn-primary',onClick:()=>{b.step=4;render();}},'Confirm + Mark as Billed'),
     ),
   );
   c.append(footer);
@@ -1851,7 +1883,7 @@ function renderBillingStep4(){
   body.append(h('p',{style:{fontSize:'13px',color:'var(--text-muted)',marginTop:'16px'}},'This action cannot be undone. Ensure you have copied the invoice details and downloaded the PDF reports before confirming.'));
   card.append(body);
 
-  const confirmBtn=h('button',{className:'btn btn-gold',onClick:async()=>{
+  const confirmBtn=h('button',{className:'btn btn-primary',onClick:async()=>{
     confirmBtn.disabled=true;confirmBtn.textContent='Updating...';
     try{
       const now=fmtD(new Date());
@@ -2019,7 +2051,7 @@ function renderCustomerReportPage(){
   ));
 
   // Filter bar
-  const fb=h('div',{style:{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'var(--radius-lg)',padding:'16px 20px',marginBottom:'16px',display:'flex',flexWrap:'wrap',gap:'16px',alignItems:'flex-end'}});
+  const fb=h('div',{style:{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'var(--rounded-3xl)',padding:'16px 20px',marginBottom:'16px',display:'flex',flexWrap:'wrap',gap:'16px',alignItems:'flex-end'}});
 
   // Date range pills
   const drWrap=h('div',{style:{display:'flex',flexDirection:'column',gap:'6px'}});
@@ -2056,7 +2088,7 @@ function renderCustomerReportPage(){
   fb.append(h('div',{style:{display:'flex',flexDirection:'column',gap:'6px'}},h('label',{className:'field-label',style:{marginBottom:'0'}},'Retailer'),retSel));
 
   // Download PDF button
-  const dlBtn=h('button',{className:'btn btn-primary',style:{alignSelf:'flex-end'},onClick:()=>downloadCustomerReportPDF(filteredPackets,cr)},ic('download'),'Download PDF');
+  const dlBtn=h('button',{className:'btn btn-primary btn-sm',style:{alignSelf:'flex-end'},onClick:()=>downloadCustomerReportPDF(filteredPackets,cr)},ic('download'),'Download PDF');
   fb.append(dlBtn);
   c.append(fb);
 
@@ -2236,7 +2268,7 @@ function render(){
   shell.append(sidenav);
   const appBody=h('div',{className:'app-body'});
   appBody.append(topbar);
-  const main=h('div',{className:'main'});
+  const main=h('div',{className:S.view==='home'?'main main-dashboard':'main'});
   if(S.view==='home')main.append(renderHome());
   else if(S.view==='records')main.append(renderRecords());
   else if(S.view==='form')main.append(renderForm(null));
