@@ -188,22 +188,24 @@ tbody tr:hover{background:var(--bg-warm);}
 .form-page-title{font-family:var(--font-display);font-size:24px;font-weight:600;color:var(--foreground);margin-bottom:var(--space-xl);}
 
 /* -- FORM SECTIONS ------------------------- */
-.form-section{background:var(--secondary);border:none;border-radius:var(--rounded-3xl);padding:var(--space-3xl) var(--space-3xl) var(--space-4xl);margin-bottom:var(--space-xl);}
+.form-section{background:var(--secondary);border:1px solid var(--border);border-radius:var(--rounded-3xl);padding:var(--space-3xl) var(--space-3xl) var(--space-4xl);margin-bottom:var(--space-xl);}
 .form-section-title{font-family:var(--font-display);font-size:15px;font-weight:800;color:var(--foreground);margin-bottom:var(--space-lg);padding-bottom:var(--space-sm);border-bottom:1px solid var(--border-light);}
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-lg);}
 .field-full{grid-column:1/-1;}
 .field-label{font-family:var(--font-body);font-size:14px;font-weight:600;line-height:20px;text-transform:uppercase;letter-spacing:.05em;color:var(--secondary-foreground);display:block;margin-bottom:var(--space-sm);} .field-label .req{color:var(--ember);margin-left:2px;font-size:12px;}
-.input,.select-input{width:100%;padding:var(--space-sm);border:none;border-radius:var(--rounded-xl);background:var(--bg);color:var(--foreground);outline:none;transition:all .2s;font-family:var(--font-body);font-size:16px;font-weight:400;line-height:22px;}
+.input,.select-input{width:100%;padding:var(--space-sm);border:1px solid var(--border);border-radius:var(--rounded-xl);background:var(--bg);color:var(--foreground);outline:none;transition:all .2s;font-family:var(--font-body);font-size:16px;font-weight:400;line-height:22px;}
 .input:focus,.select-input:focus{border-color:var(--gold);box-shadow:0 0 0 3px var(--gold-light);}
 .select-input{padding-right:calc(16px + var(--space-xs) + var(--space-sm));appearance:none;background-image:url("data:image/svg+xml;charset=UTF-8,%3Csvg width='9' height='5' viewBox='0 0 9 5' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L4.5 4L8 1' stroke='%23473f35' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right calc(var(--space-xs) + (var(--space-sm) - 2.5px)) center;background-size:9px 5px;}
-.input.error{border-color:var(--ember);background:var(--ember-light);}
+.input.error,.select-input.error{border-color:var(--ember);background:var(--ember-light);}
 .input.mono{font-family:var(--font-mono);}
 .error-text{font-family:var(--font-body);font-size:12px;font-weight:400;line-height:18px;color:var(--ember);margin-top:4px;display:none;}
 
 /* -- CUSTOMER REF COMPOSITE ---------------- */
 .ref-wrap{display:flex;align-items:center;gap:0;}
-.ref-prefix{color:var(--text-sec);background:var(--bg);border:none;border-radius:var(--rounded-lg) 0 0 var(--rounded-lg);padding:var(--space-sm);white-space:nowrap;user-select:none;display:flex;align-items:center;font-family:var(--font-body);font-size:16px;font-weight:400;line-height:22px;}
-.ref-suffix{border-radius:0 var(--rounded-lg) var(--rounded-lg) 0 !important;flex:1;font-family:var(--font-body);font-size:16px;font-weight:400;line-height:22px;}
+/* Prefix: warm bg, 3-sided border (no right), left-rounded to match field height */
+.ref-prefix{color:var(--text-sec);background:var(--bg-warm);border:1px solid var(--border);border-right:none;border-radius:var(--rounded-xl) 0 0 var(--rounded-xl);padding:var(--space-sm);white-space:nowrap;user-select:none;display:flex;align-items:center;font-family:var(--font-body);font-size:16px;font-weight:400;line-height:22px;}
+/* Suffix: 3-sided border (no left), right-rounded — together they look like one field */
+.ref-suffix{border-left:none !important;border-radius:0 var(--rounded-xl) var(--rounded-xl) 0 !important;flex:1;font-family:var(--font-body);font-size:16px;font-weight:400;line-height:22px;}
 
 /* -- ITEM CARDS ----------------------------- */
 .items-stack{display:flex;flex-direction:column;gap:var(--space-xl);}
