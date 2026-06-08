@@ -1152,26 +1152,26 @@ function renderForm(packet){
 
     // Split row
     const bottomRow=h('div',{className:'item-card-bottom'});
+    bottomRow.append(buildSplitSlider(item));
+    card.append(bottomRow);
+    return card;
+  }
 
-    // Work Split -- MUI-style continuous slider
-    // Slider value = Paula's %, left = Paula, right = Gabby
-    // Dragging left increases Paula, dragging right increases Gabby
-    const splitFld=h('div',{});
-    const splitWrap=h('div',{className:'split-wrap'});
-
-    // Slider value = Gabby's %. Far right = 100% Gabby, far left = 100% Paula.
+  /**
+   * Builds the Paula/Gabby work split slider for an item card.
+   * Writes back to item.paulaPct and item.gabriellePct on drag.
+   * Range value = Gabby's %; dragging right increases Gabby, decreases Paula.
+   */
+  function buildSplitSlider(item){
     const paulaPctLbl=h('span',{className:'para-lg'},item.paulaPct+'%');
     const gabbyPctLbl=h('span',{className:'para-lg'},item.gabriellePct+'%');
-    // Track fill grows from left as Gabby's % increases -- thumb position = Gabby%
+    // Track fill grows from left as Gabby% increases; thumb tracks same position
     const trackFill=h('div',{className:'split-track-fill',style:{width:item.gabriellePct+'%'}});
     const thumbWrap=h('div',{className:'split-thumb-wrap',style:{left:item.gabriellePct+'%'}},h('div',{className:'split-thumb'}));
     const track=h('div',{className:'split-track'},trackFill,thumbWrap);
     const sliderIn=h('div',{className:'split-slider-wrap'},track);
-
-    // Range value = Gabby's %. Drag right -> Gabby increases, Paula decreases.
     const rangeIn=h('input',{type:'range',className:'split-input',min:'0',max:'100',step:'5',value:String(item.gabriellePct)});
     sliderIn.appendChild(rangeIn);
-
     rangeIn.addEventListener('input',e=>{
       const g=Math.round(parseInt(e.target.value)/5)*5;
       item.gabriellePct=g;item.paulaPct=100-g;
@@ -1180,7 +1180,7 @@ function renderForm(packet){
       gabbyPctLbl.textContent=g+'%';
       paulaPctLbl.textContent=(100-g)+'%';
     });
-
+    const splitWrap=h('div',{className:'split-wrap'});
     splitWrap.append(
       h('div',{className:'split-names'},
         h('span',{className:'field-label'},'Paula'),
@@ -1189,9 +1189,7 @@ function renderForm(packet){
       sliderIn,
       h('div',{className:'split-pcts'},paulaPctLbl,gabbyPctLbl),
     );
-    splitFld.append(splitWrap);bottomRow.append(splitFld);
-    card.append(bottomRow);
-    return card;
+    return splitWrap;
   }
 
   // Add item button -- declared BEFORE rebuildItemsStack so it's in scope
