@@ -812,7 +812,8 @@ function renderForm(packet){
     );
   }
 
-  // Header state
+  // -- PACKET HEADER STATE (hdr) --
+  // hdr = mutable packet-level fields shared across all form sections
   const hdr={
     dateISO:packet?dateToISO(packet.date):todayISO(),
     date:packet?packet.date:fmtD(new Date()),
@@ -840,11 +841,7 @@ function renderForm(packet){
     gabriellePct:100-defaultPct,
   });
 
-  // -- HELPER FUNCTIONS (Closures over hdr, S, formItems) --
-  /**
-   * Clears error state from an input and hides error message.
-   * Used to provide feedback that validation has passed on retry.
-   */
+  // -- FIELD ERROR HELPERS --
   const clearFieldError = (input, errorEl) => {
     input.classList.remove('error');
     errorEl.style.display = 'none';
@@ -856,9 +853,9 @@ function renderForm(packet){
     errorEl.style.display = 'block';
   };
 
-  // Items loaded from Supabase for edit, or a blank card for new
-  // Note: renderForm is synchronous so we pre-load items into S.editItems
-  // before calling renderForm, then clear them after
+  // -- ITEM STATE --
+  // Pre-loaded into S.editItems by renderAsync before renderForm is called (edit mode).
+  // renderForm is synchronous; S.editItems is cleared after use.
   const formItems=[];
   if(isEdit && S.editItems && S.editItems.length){
     S.editItems.forEach(row=>{
@@ -889,13 +886,11 @@ function renderForm(packet){
     formItems.push(makeItem());
   }
 
-  // -- STICKY FORM HEADER --
+  // -- FORM SCAFFOLD (title, wrapper, sticky header) --
   const isEditTitle=isEdit?'Edit Packet':'New Packet';
-
-  // -- WRAP --
   const wrap=h('div',{className:'form-wrap fade-up'});
 
-  // -- HEADER SECTION --
+  // -- PACKET DETAILS SECTION (billing status + date/retailer/ref/surname fields) --
   const headerSection=h('div',{className:'form-section'});
   if(isEdit&&packet){
     const pBilled=packet.paula_billed||false;
@@ -1002,13 +997,13 @@ function renderForm(packet){
   const refErr=h('span',{className:'error-text'},'Reference is required');
   const refWrap=h('div',{className:'ref-wrap'});
   // Standard ref suffix input (Alexandra/Queenstown)
-  const refSufIn=h('input',{type:'text',className:'input ref-suffix',placeholder:'',maxLength:'7',value:hdr.refSuffix,inputMode:'numeric'});
+  const refSuffixInput=h('input',{type:'text',className:'input ref-suffix',placeholder:'',maxLength:'7',value:hdr.refSuffix,inputMode:'numeric'});
   // NJ free-text ref input
-  const refFreeIn=h('input',{type:'text',className:'input',placeholder:'Enter reference',value:hdr.customerRef});
+  const customerRefInput=h('input',{type:'text',className:'input',placeholder:'Enter reference',value:hdr.customerRef});
 
   function syncCustomerRef(){
     if(isNJ()){
-      hdr.customerRef=refFreeIn.value.trim();
+      hdr.customerRef=customerRefInput.value.trim();
     } else {
       const r=S.retailers.find(x=>x.id===hdr.retailerId);
       hdr.customerRef=pad3(r?.code||0)+'-'+hdr.refSuffix;
@@ -1018,23 +1013,23 @@ function renderForm(packet){
   function rebuildCustomerRefInput(){
     refWrap.innerHTML='';
     if(isNJ()){
-      refWrap.append(refFreeIn);
+      refWrap.append(customerRefInput);
       prefixDisplay.style.display='none';
     } else {
       prefixDisplay.style.display='';
-      refWrap.append(prefixDisplay,refSufIn);
+      refWrap.append(prefixDisplay,refSuffixInput);
     }
   }
 
-  refSufIn.addEventListener('input',e=>{
+  refSuffixInput.addEventListener('input',e=>{
     hdr.refSuffix=e.target.value.replace(/\D/g,'').slice(0,7);
-    refSufIn.value=hdr.refSuffix;
+    refSuffixInput.value=hdr.refSuffix;
     syncCustomerRef();
-    clearFieldError(refSufIn, refErr);
+    clearFieldError(refSuffixInput, refErr);
   });
-  refFreeIn.addEventListener('input',e=>{
+  customerRefInput.addEventListener('input',e=>{
     syncCustomerRef();
-    clearFieldError(refFreeIn, refErr);
+    clearFieldError(customerRefInput, refErr);
   });
 
   retSel.addEventListener('change',e=>{
@@ -1044,7 +1039,7 @@ function renderForm(packet){
     syncCustomerRef();
     rebuildCustomerRefInput();
     rebuildSubCustomerSelect();
-    clearFieldError(refSufIn, refErr);
+    clearFieldError(refSuffixInput, refErr);
   });
   retFld.append(retSel);headerGrid.append(retFld);
 
@@ -1077,7 +1072,7 @@ function renderForm(packet){
   headerGrid.append(subCustFld);
 
   // Tab from retailer should focus ref
-  retSel.addEventListener('keydown',e=>{if(e.key==='Tab'&&!e.shiftKey){e.preventDefault();(isNJ()?refFreeIn:refSufIn).focus();}});
+  retSel.addEventListener('keydown',e=>{if(e.key==='Tab'&&!e.shiftKey){e.preventDefault();(isNJ()?customerRefInput:refSuffixInput).focus();}});
 
   // Surname (full width)
   const surFld=h('div',{className:'field-full'},h('label',{className:'field-label'},'Surname *'));
@@ -1247,15 +1242,12 @@ function renderForm(packet){
     h('div',{className:'form-sticky-inner'},titleRow,actionsDiv),
   );
 
-  // -- SAVE LOGIC --
-  // IMPORTANT: Never call render() on validation failure -- it rebuilds the DOM
-  // and wipes formItems. Only manipulate existing DOM elements inline.
 
-  /**
-   * Validates the form and displays errors inline.
-   * Returns {valid: boolean, firstError: HTMLElement or null}
-   * Handles error display without calling render() or toast()
-   */
+  // -- SAVE LOGIC --
+  // IMPORTANT: Never call render()/toast() on validation failure — they rebuild
+  // the DOM and wipe formItems. Only manipulate existing DOM elements inline.
+
+  /** Returns {valid, firstError}. Shows errors inline; no render(), no toast(). */
   function validateForm() {
     let ok = true;
     let firstError = null;
@@ -1265,18 +1257,18 @@ function renderForm(packet){
       syncCustomerRef();
       if (!hdr.customerRef) {
         ok = false;
-        showFieldError(refFreeIn, refErr, 'Reference is required');
-        if (!firstError) firstError = refFreeIn;
+        showFieldError(customerRefInput, refErr, 'Reference is required');
+        if (!firstError) firstError = customerRefInput;
       } else {
-        clearFieldError(refFreeIn, refErr);
+        clearFieldError(customerRefInput, refErr);
       }
     } else {
       if (!hdr.refSuffix || !/^\d{4,7}$/.test(hdr.refSuffix)) {
         ok = false;
-        showFieldError(refSufIn, refErr, 'Enter 4-5 digits after the dash');
-        if (!firstError) firstError = refSufIn;
+        showFieldError(refSuffixInput, refErr, 'Enter 4-5 digits after the dash');
+        if (!firstError) firstError = refSuffixInput;
       } else {
-        clearFieldError(refSufIn, refErr);
+        clearFieldError(refSuffixInput, refErr);
       }
     }
 
@@ -1303,7 +1295,6 @@ function renderForm(packet){
   async function doSave(saveAndNew=false){
     const validation = validateForm();
     if (!validation.valid) {
-      // Show errors inline only -- no render(), no toast()
       if (validation.firstError) {
         validation.firstError.scrollIntoView({behavior: 'smooth', block: 'center'});
       }
