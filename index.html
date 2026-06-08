@@ -806,13 +806,14 @@ function renderForm(packet){
     return h('div',{className:'form-wrap fade-up'},
       h('h1',{className:'form-page-title'},'New Work Packet'),
       h('div',{className:'form-section'},
-        h('p',{style:{fontFamily:'var(--font-body)',fontSize:'14px',color:'var(--ember)'}},'Lookup data not loaded. Check Supabase tables (retailers, items, job_types) exist and contain data.'),
+        h('p',{className:'para',style:{color:'var(--ember)'}},'Lookup data not loaded. Check Supabase tables (retailers, items, job_types) exist and contain data.'),
         retryBtn,
       )
     );
   }
 
-  // Header state
+  // -- PACKET HEADER STATE (hdr) --
+  // hdr = mutable packet-level fields shared across all form sections
   const hdr={
     dateISO:packet?dateToISO(packet.date):todayISO(),
     date:packet?packet.date:fmtD(new Date()),
@@ -840,19 +841,21 @@ function renderForm(packet){
     gabriellePct:100-defaultPct,
   });
 
-  // -- HELPER FUNCTIONS (Closures over hdr, S, formItems) --
-  /**
-   * Clears error state from an input and hides error message.
-   * Used to provide feedback that validation has passed on retry.
-   */
+  // -- FIELD ERROR HELPERS --
   const clearFieldError = (input, errorEl) => {
     input.classList.remove('error');
     errorEl.style.display = 'none';
   };
 
-  // Items loaded from Supabase for edit, or a blank card for new
-  // Note: renderForm is synchronous so we pre-load items into S.editItems
-  // before calling renderForm, then clear them after
+  const showFieldError = (input, errorEl, message) => {
+    input.classList.add('error');
+    errorEl.textContent = message;
+    errorEl.style.display = 'block';
+  };
+
+  // -- ITEM STATE --
+  // Pre-loaded into S.editItems by renderAsync before renderForm is called (edit mode).
+  // renderForm is synchronous; S.editItems is cleared after use.
   const formItems=[];
   if(isEdit && S.editItems && S.editItems.length){
     S.editItems.forEach(row=>{
@@ -883,13 +886,11 @@ function renderForm(packet){
     formItems.push(makeItem());
   }
 
-  // -- STICKY FORM HEADER --
+  // -- FORM SCAFFOLD (title, wrapper, sticky header) --
   const isEditTitle=isEdit?'Edit Packet':'New Packet';
-
-  // -- WRAP --
   const wrap=h('div',{className:'form-wrap fade-up'});
 
-  // -- HEADER SECTION --
+  // -- PACKET DETAILS SECTION (billing status + date/retailer/ref/surname fields) --
   const headerSection=h('div',{className:'form-section'});
   if(isEdit&&packet){
     const pBilled=packet.paula_billed||false;
@@ -996,56 +997,56 @@ function renderForm(packet){
   const refErr=h('span',{className:'error-text'},'Reference is required');
   const refWrap=h('div',{className:'ref-wrap'});
   // Standard ref suffix input (Alexandra/Queenstown)
-  const refSufIn=h('input',{type:'text',className:'input ref-suffix',placeholder:'',maxLength:'7',value:hdr.refSuffix,inputMode:'numeric'});
+  const refSuffixInput=h('input',{type:'text',className:'input ref-suffix',placeholder:'',maxLength:'7',value:hdr.refSuffix,inputMode:'numeric'});
   // NJ free-text ref input
-  const refFreeIn=h('input',{type:'text',className:'input',placeholder:'Enter reference',value:hdr.customerRef});
+  const customerRefInput=h('input',{type:'text',className:'input',placeholder:'Enter reference',value:hdr.customerRef});
 
-  function updateFullRef(){
+  function syncCustomerRef(){
     if(isNJ()){
-      hdr.customerRef=refFreeIn.value.trim();
+      hdr.customerRef=customerRefInput.value.trim();
     } else {
       const r=S.retailers.find(x=>x.id===hdr.retailerId);
       hdr.customerRef=pad3(r?.code||0)+'-'+hdr.refSuffix;
     }
   }
 
-  function rebuildRefField(){
+  function rebuildCustomerRefInput(){
     refWrap.innerHTML='';
     if(isNJ()){
-      refWrap.append(refFreeIn);
+      refWrap.append(customerRefInput);
       prefixDisplay.style.display='none';
     } else {
       prefixDisplay.style.display='';
-      refWrap.append(prefixDisplay,refSufIn);
+      refWrap.append(prefixDisplay,refSuffixInput);
     }
   }
 
-  refSufIn.addEventListener('input',e=>{
+  refSuffixInput.addEventListener('input',e=>{
     hdr.refSuffix=e.target.value.replace(/\D/g,'').slice(0,7);
-    refSufIn.value=hdr.refSuffix;
-    updateFullRef();
-    refSufIn.classList.remove('error');refErr.style.display='none';
+    refSuffixInput.value=hdr.refSuffix;
+    syncCustomerRef();
+    clearFieldError(refSuffixInput, refErr);
   });
-  refFreeIn.addEventListener('input',e=>{
-    updateFullRef();
-    refFreeIn.classList.remove('error');refErr.style.display='none';
+  customerRefInput.addEventListener('input',e=>{
+    syncCustomerRef();
+    clearFieldError(customerRefInput, refErr);
   });
 
   retSel.addEventListener('change',e=>{
     hdr.retailerId=parseInt(e.target.value);
     const r=S.retailers.find(x=>x.id===hdr.retailerId);
     prefixDisplay.textContent=pad3(r?.code||0)+' -';
-    updateFullRef();
-    rebuildRefField();
-    rebuildSubCustomerField();
-    refSufIn.classList.remove('error');refErr.style.display='none';
+    syncCustomerRef();
+    rebuildCustomerRefInput();
+    rebuildSubCustomerSelect();
+    clearFieldError(refSuffixInput, refErr);
   });
   retFld.append(retSel);headerGrid.append(retFld);
 
   // Sub-customer field (NJ only)
   const subCustFld=h('div',{className:'field-full'});
   const subCustErr=h('span',{className:'error-text'},'Sub-customer is required for Nationwide Jewellers');
-  function buildSubCustomerField(){
+  function rebuildSubCustomerSelect(){
     subCustFld.innerHTML='';
     if(!isNJ()){subCustFld.style.display='none';return;}
     subCustFld.style.display='';
@@ -1059,26 +1060,25 @@ function renderForm(packet){
     });
     sel.addEventListener('change',e=>{
       hdr.subCustomer=e.target.value;
-      sel.classList.remove('error');subCustErr.style.display='none';
+      clearFieldError(sel, subCustErr);
     });
     subCustFld.append(sel,subCustErr);
   }
-  function rebuildSubCustomerField(){buildSubCustomerField();}
-  buildSubCustomerField();
+  rebuildSubCustomerSelect();
 
   // Customer Ref field
-  rebuildRefField();
+  rebuildCustomerRefInput();
   refFld.append(refWrap,refErr);headerGrid.append(refFld);
   headerGrid.append(subCustFld);
 
   // Tab from retailer should focus ref
-  retSel.addEventListener('keydown',e=>{if(e.key==='Tab'&&!e.shiftKey){e.preventDefault();(isNJ()?refFreeIn:refSufIn).focus();}});
+  retSel.addEventListener('keydown',e=>{if(e.key==='Tab'&&!e.shiftKey){e.preventDefault();(isNJ()?customerRefInput:refSuffixInput).focus();}});
 
   // Surname (full width)
   const surFld=h('div',{className:'field-full'},h('label',{className:'field-label'},'Surname *'));
   const surErr=h('span',{className:'error-text'},'Surname is required');
   const surIn=h('input',{className:'input',placeholder:'',value:hdr.surname});
-  surIn.addEventListener('input',e=>{hdr.surname=tc(e.target.value);surIn.value=hdr.surname;surIn.classList.remove('error');surErr.style.display='none';});
+  surIn.addEventListener('input',e=>{hdr.surname=tc(e.target.value);surIn.value=hdr.surname;clearFieldError(surIn,surErr);});
   surFld.append(surIn,surErr);headerGrid.append(surFld);
 
   headerSection.append(headerGrid);
@@ -1111,7 +1111,7 @@ function renderForm(packet){
 
     // Warning if job type not found in lookup
     if(item._warning){
-      card.append(h('p',{style:{fontSize:'12px',color:'var(--ember)',marginBottom:'var(--space-xs)',fontFamily:'var(--font-body)'}},
+      card.append(h('p',{className:'para-sm',style:{color:'var(--ember)',marginBottom:'var(--space-xs)'}},
         '(!) '+item._warning));
     }
 
@@ -1147,26 +1147,26 @@ function renderForm(packet){
 
     // Split row
     const bottomRow=h('div',{className:'item-card-bottom'});
+    bottomRow.append(buildSplitSlider(item));
+    card.append(bottomRow);
+    return card;
+  }
 
-    // Work Split -- MUI-style continuous slider
-    // Slider value = Paula's %, left = Paula, right = Gabby
-    // Dragging left increases Paula, dragging right increases Gabby
-    const splitFld=h('div',{});
-    const splitWrap=h('div',{className:'split-wrap'});
-
-    // Slider value = Gabby's %. Far right = 100% Gabby, far left = 100% Paula.
+  /**
+   * Builds the Paula/Gabby work split slider for an item card.
+   * Writes back to item.paulaPct and item.gabriellePct on drag.
+   * Range value = Gabby's %; dragging right increases Gabby, decreases Paula.
+   */
+  function buildSplitSlider(item){
     const paulaPctLbl=h('span',{className:'para-lg'},item.paulaPct+'%');
     const gabbyPctLbl=h('span',{className:'para-lg'},item.gabriellePct+'%');
-    // Track fill grows from left as Gabby's % increases -- thumb position = Gabby%
+    // Track fill grows from left as Gabby% increases; thumb tracks same position
     const trackFill=h('div',{className:'split-track-fill',style:{width:item.gabriellePct+'%'}});
     const thumbWrap=h('div',{className:'split-thumb-wrap',style:{left:item.gabriellePct+'%'}},h('div',{className:'split-thumb'}));
     const track=h('div',{className:'split-track'},trackFill,thumbWrap);
     const sliderIn=h('div',{className:'split-slider-wrap'},track);
-
-    // Range value = Gabby's %. Drag right -> Gabby increases, Paula decreases.
     const rangeIn=h('input',{type:'range',className:'split-input',min:'0',max:'100',step:'5',value:String(item.gabriellePct)});
     sliderIn.appendChild(rangeIn);
-
     rangeIn.addEventListener('input',e=>{
       const g=Math.round(parseInt(e.target.value)/5)*5;
       item.gabriellePct=g;item.paulaPct=100-g;
@@ -1175,7 +1175,7 @@ function renderForm(packet){
       gabbyPctLbl.textContent=g+'%';
       paulaPctLbl.textContent=(100-g)+'%';
     });
-
+    const splitWrap=h('div',{className:'split-wrap'});
     splitWrap.append(
       h('div',{className:'split-names'},
         h('span',{className:'field-label'},'Paula'),
@@ -1184,9 +1184,7 @@ function renderForm(packet){
       sliderIn,
       h('div',{className:'split-pcts'},paulaPctLbl,gabbyPctLbl),
     );
-    splitFld.append(splitWrap);bottomRow.append(splitFld);
-    card.append(bottomRow);
-    return card;
+    return splitWrap;
   }
 
   // Add item button -- declared BEFORE rebuildItemsStack so it's in scope
@@ -1244,40 +1242,33 @@ function renderForm(packet){
     h('div',{className:'form-sticky-inner'},titleRow,actionsDiv),
   );
 
-  // -- SAVE LOGIC --
-  // IMPORTANT: Never call render() on validation failure -- it rebuilds the DOM
-  // and wipes formItems. Only manipulate existing DOM elements inline.
 
-  /**
-   * Validates the form and displays errors inline.
-   * Returns {valid: boolean, firstError: HTMLElement or null}
-   * Handles error display without calling render() or toast()
-   */
+  // -- SAVE LOGIC --
+  // IMPORTANT: Never call render()/toast() on validation failure — they rebuild
+  // the DOM and wipe formItems. Only manipulate existing DOM elements inline.
+
+  /** Returns {valid, firstError}. Shows errors inline; no render(), no toast(). */
   function validateForm() {
     let ok = true;
     let firstError = null;
 
     // Validate Customer Reference
     if (isNJ()) {
-      updateFullRef();
+      syncCustomerRef();
       if (!hdr.customerRef) {
         ok = false;
-        refFreeIn.classList.add('error');
-        refErr.style.display = 'block';
-        refErr.textContent = 'Reference is required';
-        if (!firstError) firstError = refFreeIn;
+        showFieldError(customerRefInput, refErr, 'Reference is required');
+        if (!firstError) firstError = customerRefInput;
       } else {
-        clearFieldError(refFreeIn, refErr);
+        clearFieldError(customerRefInput, refErr);
       }
     } else {
       if (!hdr.refSuffix || !/^\d{4,7}$/.test(hdr.refSuffix)) {
         ok = false;
-        refSufIn.classList.add('error');
-        refErr.style.display = 'block';
-        refErr.textContent = 'Enter 4-5 digits after the dash';
-        if (!firstError) firstError = refSufIn;
+        showFieldError(refSuffixInput, refErr, 'Enter 4-5 digits after the dash');
+        if (!firstError) firstError = refSuffixInput;
       } else {
-        clearFieldError(refSufIn, refErr);
+        clearFieldError(refSuffixInput, refErr);
       }
     }
 
@@ -1285,16 +1276,14 @@ function renderForm(packet){
     if (isNJ() && !hdr.subCustomer) {
       ok = false;
       const subSel = subCustFld.querySelector('select');
-      if (subSel) subSel.classList.add('error');
-      subCustErr.style.display = 'block';
+      if (subSel) showFieldError(subSel, subCustErr, subCustErr.textContent);
       if (!firstError) firstError = subCustFld.querySelector('select');
     }
 
     // Validate Surname
     if (!hdr.surname.trim()) {
       ok = false;
-      surIn.classList.add('error');
-      surErr.style.display = 'block';
+      showFieldError(surIn, surErr, 'Surname is required');
       if (!firstError) firstError = surIn;
     } else {
       clearFieldError(surIn, surErr);
@@ -1306,7 +1295,6 @@ function renderForm(packet){
   async function doSave(saveAndNew=false){
     const validation = validateForm();
     if (!validation.valid) {
-      // Show errors inline only -- no render(), no toast()
       if (validation.firstError) {
         validation.firstError.scrollIntoView({behavior: 'smooth', block: 'center'});
       }
@@ -1314,7 +1302,7 @@ function renderForm(packet){
     }
 
     // All valid -- call server
-    updateFullRef();
+    syncCustomerRef();
     saveBtn.disabled=true;
     if(saveAndNewBtn)saveAndNewBtn.disabled=true;
     if(saveBtnBottom)saveBtnBottom.disabled=true;
