@@ -13,25 +13,49 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Rules:
 - All code changes go into `AppraisalTracker-dev.html` first
-- **Never generate the dev file from `index.html` using sed or copy** — the dev file is ahead of prod and has a different layout; overwriting it destroys work
-- When the user approves changes for commit, copy dev to prod using `sed` to swap only `SB_URL`, `SB_KEY`, and `<title>` to prod values — never reverse this (never generate dev from prod)
+- **Never generate the dev file from `index.html`** if dev is ahead of prod — overwriting it destroys work. It is safe to regenerate dev from prod only when they are confirmed in sync (e.g. at the start of a session after a full merge, when the dev file has been deleted from the repo)
+- To regenerate dev from prod: `sed` to swap only `SB_URL`, `SB_KEY`, and `<title>` — nothing else
+- When the user approves changes for commit, copy dev to prod the same way
 - The preview server at port 8081 serves the whole directory — always navigate to `/AppraisalTracker-dev.html` to test
 
 ## Overview
 
 Billing tracker for jewellery appraisals. Paula and Gabby invoice jewellery retailers independently based on per-job cost split percentages. Single HTML file + external stylesheet (`styles.css`), vanilla JS, Supabase (PostgreSQL via REST, no SDK), hosted on GitHub Pages.
 
-Full project reference: `PROJECT.md` and `PROJECT-SHORT.md` — read these for DB schema, business rules, and design system details.
+Full project reference: `PROJECT.md` — read for DB schema, business rules, and design system details.
 
 ## Architecture
 
-**Rendering:** Uses a custom `h(tag, attrs, ...children)` helper that creates DOM elements imperatively. Every state change calls `render()`, which wipes `#app` and rebuilds the entire DOM. No diffing.
+**Rendering:** Custom `h(tag, attrs, ...children)` helper creates DOM elements imperatively. Every state change calls `render()`, which wipes `#app` and rebuilds the entire DOM. No diffing.
 
-**State:** A single global `S` object. Key fields: `S.view`, `S.packets`, `S.allPacketItems`, `S.items`, `S.retailers`, `S.jobTypes`, `S.billingStatuses`, `S.users`, `S.billing`, `S.recFilters`, `S.editId`, `S.user` (slug: `'gabby'` | `'paula'`), `S.subCustomers`.
+**State:** Single global `S` object — `S.view`, `S.packets`, `S.allPacketItems`, `S.items`, `S.retailers`, `S.jobTypes`, `S.billingStatuses`, `S.users`, `S.billing`, `S.recFilters`, `S.editId`, `S.user` (`'gabby'` | `'paula'`), `S.subCustomers`, `S.editItems`.
 
 **Backend:** Supabase via direct REST — `sbAll`, `sbInsert`, `sbUpdate`, `sbDelete`, `sbUpsert`, `fetchPacketItems(id)`.
 
 **Layout:** Sidenav (220px) + topbar (90px) + main content area, all floating on a white canvas with 8px padding.
+
+## renderForm() Structure
+
+`renderForm(packet)` is the Work Packet form (~550 lines). Sections and helpers inside it:
+
+```
+// -- PACKET HEADER STATE (hdr) --   mutable fields: dateISO, retailerId, customerRef, refSuffix, surname, subCustomer
+// -- ITEM STATE --                   formItems[] — pre-loaded from S.editItems (edit) or blank (new)
+// -- FIELD ERROR HELPERS --
+  clearFieldError(input, errorEl)     removes .error class, hides message
+  showFieldError(input, errorEl, msg) adds .error class, sets message, shows it
+// -- PACKET DETAILS SECTION --       billing status, date, retailer, ref, sub-customer, surname
+  syncCustomerRef()                   writes hdr.customerRef from current inputs (NJ = free text, others = prefix+suffix)
+  rebuildCustomerRefInput()           swaps refWrap between free-text (NJ) and prefix+suffix (standard)
+  rebuildSubCustomerSelect()          builds/rebuilds NJ sub-customer dropdown
+// -- ITEMS SECTION --
+  buildItemCard(item, index)          builds an item card DOM node
+  buildSplitSlider(item)              builds Paula/Gabby split slider (called from buildItemCard)
+  rebuildItemsStack()                 clears and re-renders all item cards
+// -- SAVE LOGIC --
+  validateForm()                      returns {valid, firstError} — shows errors inline, never calls render()/toast()
+  doSave(saveAndNew)                  validates then calls savePacket/updatePacket
+```
 
 ## Bug Prevention Rules (read before every edit)
 
@@ -50,19 +74,19 @@ Full project reference: `PROJECT.md` and `PROJECT-SHORT.md` — read these for D
 
 ## Design System & Styling
 
-**Reference:** See `project_styling_progress.md` in memory for complete styling details, Figma reference (fileKey: `bDb5CJBIcdtEKdKIsGYhs4`).
+**Reference:** See `project_styling_progress.md` in memory for complete styling details. Figma file key: `bDb5CJBIcdtEKdKIsGYhs4`.
 
-**Spacing scale:** Global CSS variables `--space-xs` through `--space-6xl` (8px to 80px). Use for gaps, padding, margins.
+**Spacing:** `--space-xs` (8px) → `--space-6xl` (80px)
 
-**Corner radius:** `--rounded-md`, `--rounded-lg`, `--rounded-xl`, `--rounded-2xl`, `--rounded-3xl`, `--rounded-full`.
+**Corner radius:** `--rounded-md` (6px), `--rounded-lg` (8px), `--rounded-xl` (12px), `--rounded-2xl` (16px), `--rounded-3xl` (24px), `--rounded-full`
 
-**Typography:** Utility classes `.h1`–`.h4` (headings), `.para`, `.para-lg`, `.para-sm`, `.para-mini` (body), `.caption`, `.mono`. All use DM Sans body font.
+**Typography:** `.h1`–`.h4` (Montserrat headings), `.para-lg`, `.para`, `.para-sm`, `.para-mini` (DM Sans body), `.caption`, `.mono`
 
-**Buttons:** `.btn-primary` (gold, 40px min-height), `.btn-secondary` (outline, 40px), `.btn-link` (text only), `.btn-destructive`, `.btn-sm` (small inline 12px). Primary text is `#FCF9F6` (off-white).
+**Buttons:** `.btn-primary` (gold), `.btn-secondary` (outline), `.btn-link` (text only), `.btn-destructive`, `.btn-sm` (size modifier)
 
-**Form fields:** Inputs/selects = white bg, no border, `--rounded-xl` (12px), `var(--space-sm)` padding. Item area selects = secondary bg (#f3f0ed), border 1px, custom SVG chevron.
+**Form fields:** Inputs/selects = white bg, `1px solid var(--border)`, `--rounded-xl`, `var(--space-sm)` padding. Item area inputs override to secondary bg. Customer ref composite: prefix = warm bg (`--bg-warm`) + 3-sided border (no right), suffix = 3-sided border (no left) — looks like one joined field.
 
-**Colour tokens:** Use Figma scale names: `--violet-800`, `--gold-400`, `--brand-neutral-300`, `--brand-neutral-600`, `--secondary`, `--foreground`, `--secondary-foreground`. Avoid legacy names (`--gold-dark`, plum, sage, etc.).
+**Colour tokens:** Prefer Figma scale names — `--secondary`, `--foreground`, `--secondary-foreground`, `--brand-neutral-300`, `--brand-neutral-600`, `--violet-800`, `--gold-400`. Avoid legacy names (`--plum`, `--sage`, etc.).
 
 ## Pre-Delivery Checklist
 
