@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## CRITICAL: Branch Discipline
+
+**Always work on `dev` — NEVER commit to `main` directly.**
+
+- All development commits go to `dev`
+- `main` is production-only — updated only when merging `dev` for a release
+- A pre-commit hook enforces this: any commit attempt on `main` will be blocked with an error
+- If you find yourself on `main`, stop and run `git checkout dev` before making any changes
+
 ## CRITICAL: Dev/Prod File Discipline
 
 **Always edit `AppraisalTracker-dev.html` — NEVER `index.html` during development.**
