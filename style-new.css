@@ -1,0 +1,11 @@
+/* ============================================================
+   APPRAISAL TRACKER — MIGRATED STYLESHEET
+   Replaces styles.css. Uses design-system token variables only.
+   No hex values, no pixel values, no hardcoded anything.
+
+   Load order in HTML head:
+     1. design-system/tokens/tokens-html.css
+     2. design-system/components/html/components.css
+     3. styles.css                               (legacy — retire when done)
+     4. style-new.css                            (this file)
+   ============================================================ */

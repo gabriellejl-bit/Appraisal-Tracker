@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "http-server",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8081"],
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "/Users/gabriellelovering/Documents/Claude Projects/appraisal-tracker", "-p", "8081", "--no-clipboard"],
       "port": 8081
     }
   ]
