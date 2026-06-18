@@ -664,8 +664,8 @@ function renderRecords(){
 
   // Search
   const sWrap=h('div',{style:{position:'relative',width:'100%'}});
-  sWrap.append(h('span',{style:{position:'absolute',left:'12px',top:'50%',transform:'translateY(-50%)',color:'var(--color-muted-foreground)',display:'flex',pointerEvents:'none'},htmlContent:I.search}));
-  const sIn=h('input',{className:'input',style:{paddingLeft:'38px',width:'100%'},placeholder:'Search ref, surname, date...',value:f.search});
+  sWrap.append(h('span',{style:{position:'absolute',left:'var(--space-3)',top:'50%',transform:'translateY(-50%)',color:'var(--color-muted-foreground)',display:'flex',pointerEvents:'none'},htmlContent:I.search}));
+  const sIn=h('input',{className:'input',style:{paddingLeft:'var(--space-9)',width:'100%'},placeholder:'Search ref, surname, date...',value:f.search});
   sIn.addEventListener('input',e=>{S.searchHadFocus=true;S.searchCursorPos=e.target.selectionStart;f.search=e.target.value;render();});
   sWrap.append(sIn);
   filterRow.append(fld('Search',sWrap,{flex:'1 1 0'}));
