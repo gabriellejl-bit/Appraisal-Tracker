@@ -745,11 +745,11 @@ function renderRecords(){
   // Batch toolbar
   if(selCount>0){
     const bb=h('div',{className:'batch-toolbar'});
-    bb.append(h('span',{style:{fontSize:'var(--text-sm)',fontWeight:'var(--font-semibold)',color:'var(--color-foreground)',flex:'1'}},selCount+' packet'+(selCount!==1?'s':'')+' selected'));
+    bb.append(h('span',{className:'text-para-regular',style:{fontWeight:'var(--font-semibold)',flex:'1'}},selCount+' packet'+(selCount!==1?'s':'')+' selected'));
     const sd=h('select',{className:'select',style:{width:'200px'}});
     sd.append(h('option',{value:''},'Change status to...'));
     S.billingStatuses.forEach(s=>sd.append(h('option',{value:String(s.id)},s.name)));
-    const ab=h('button',{className:'btn btn-primary btn-sm',onClick:async()=>{
+    const ab=h('button',{className:'btn btn-primary',onClick:async()=>{
       const nid=parseInt(sd.value);
       if(!nid){showToast('Select a status first',true);return;}
       ab.disabled=true;ab.textContent='Updating...';
