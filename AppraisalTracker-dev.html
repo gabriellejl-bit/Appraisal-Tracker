@@ -657,7 +657,7 @@ function renderRecords(){
   // Filter bar — column container holds the select row + optional custom date row
   // fld: label + field column; wStyle applied to the outer wrapper for flex sizing
   const fld=(lbl,el,wStyle)=>h('div',{style:Object.assign({display:'flex',flexDirection:'column',gap:'var(--space-2)'},wStyle||{})},
-    h('label',{className:'label',style:{marginBottom:'0'}},lbl),el);
+    h('label',{className:'label label-compact'},lbl),el);
 
   const fb=h('div',{style:{borderRadius:'var(--radius-3xl)',padding:'var(--space-5) 0',marginBottom:'var(--space-4)',display:'flex',flexDirection:'column',gap:'var(--space-3)'}});
   const filterRow=h('div',{style:{display:'flex',gap:'var(--space-4)',alignItems:'flex-end'}});

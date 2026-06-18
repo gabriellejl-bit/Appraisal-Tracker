@@ -131,6 +131,9 @@
    This unlayered rule restores the intended spacing. */
 .label { margin-bottom: var(--space-3); }
 
+/* Compact label variant for filter bar — spacing handled by flex gap instead */
+.label-compact { margin-bottom: 0; }
+
 /* Required asterisk inside labels */
 .label .req {
   color:       var(--color-destructive);
