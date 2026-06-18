@@ -11,36 +11,36 @@ When all rows are marked ✅ Done, `style-new.css` becomes `styles.css` and the 
 
 ---
 
-## Side-effects already active from loading `components.css`
+## Page-level audits
 
-These classes are used in the existing app AND defined in `components.css`. The new styles are
-already applying. `styles.css` unlayered rules win on any conflicting property (cascade layers
-are lower priority), but any property only defined in `components.css` takes effect immediately.
+Tracks which pages have been fully audited for: correct page-header structure, filter bar pattern (`.select` dropdowns, `fld` helper, `filterRow`), table classes (`.table`, `table-header` on each `th`), empty state classes, and no legacy/hardcoded tokens.
 
-| Class | What changed | Status |
+| Page | Status | Notes |
 |---|---|---|
-| `.input` | `height: 2.75rem` (44px) applied — styles.css had no explicit height | ✅ Accepted |
-| `.badge` | components.css `.badge` base styles apply (gold bg, pill shape) — may conflict with `.badge-plum` / `.badge-ember` variants in styles.css | ⚠️ Needs check |
-| `.btn-primary` `.btn-secondary` `.btn-destructive` `.btn-link` | components.css adds base layout; styles.css overrides visual properties (colour, size) since it's unlayered | ✅ Looks OK |
+| Records | ✅ Done | Canonical pattern — all other pages reference this |
+| Billing Step 1 (Run Billing) | ✅ Done | Status + date range dropdowns; custom dates inline |
+| Customer Report | ✅ Done | Date range first, retailer second; PDF button at bottom |
+| Billing Runs Report | ✅ Done | `page-header` + `h1`; delete button removed (too risky without modal) |
+| Dashboard | ⬜ Not started | `.stat-card`, `.panel`, `.dash-header` still in legacy styles.css |
+| Billing Steps 2–4 | ⬜ Not started | |
+| Reports landing | ⬜ Not started | Card grid; hardcoded px values present |
 
 ---
 
-## Migration status by section
-
-### `styles.css` sections → `style-new.css`
+## CSS sections — `styles.css` → `style-new.css`
 
 | Section | Lines | Status | Notes |
 |---|---|---|---|
-| `:root` token definitions | 1–23 | ⏳ Replace | Will be replaced entirely by `tokens-html.css` — delete when done |
-| Typography scale (`.h1`–`.h4`) | 27–52 | ✅ Done | `.h1`–`.h4` added to `style-new.css` using tokens. No uppercase on `.h4` globally — applied locally via inline style where needed. `.para-*`/`.mono` not yet replaced (body inherits from base; no matching new classes yet) |
+| `:root` token definitions | 1–23 | ⏳ Replace | Replaced in JS/HTML (global token sweep done). CSS `:root` block stays until styles.css is retired. |
+| Typography scale (`.h1`–`.h4`) | 27–52 | ✅ Done | `.h1`–`.h4` added to `style-new.css` using tokens. `.para-*`/`.mono` not yet replaced. No uppercase on `.h4` globally — applied locally via inline style. |
 | App shell (`.app-shell`) | 54–55 | ⬜ Not started | |
 | Side nav | 57–74 | ⬜ Not started | |
 | App body + topbar | 76–84 | ⬜ Not started | |
 | User toggle | 86–95 | ⬜ Not started | |
 | Main area | 97–99 | ⬜ Not started | |
-| Dashboard | 101–133 | ⬜ Not started | |
-| Content grid + panels | 135–143 | ⬜ Not started | |
-| Table (Records results) | 145–164 | ✅ Done | `.table`, `.table-header`, `.table-row-selected`, text truncation, badge retirement, row selection state |
+| Dashboard | 101–133 | ⚠️ Partial | Legacy token vars replaced. Structural classes (`.stat-card`, `.panel`, `.dash-header` etc.) still in styles.css. |
+| Content grid + panels | 135–143 | ⚠️ Partial | Legacy token vars replaced. `.content-grid`, `.panel`, `.panel-header`, `.panel-title`, `.sidebar` still in styles.css. |
+| Table (Records results) | 145–164 | ✅ Done | `.table`, `.table-header`, `.table-row-selected`, text truncation, badge retirement, row selection state. |
 | Sidebar + quick actions | 166–177 | ⬜ Not started | |
 | Search bar | 179–184 | ⬜ Not started | |
 | Form layout + sections | 186–201 | ✅ Done | `.form-wrap`, `.form-section`, `.form-section-title`, `.form-grid`, `.field-full`, `.label`, `.error-text` |
@@ -49,15 +49,15 @@ are lower priority), but any property only defined in `components.css` takes eff
 | Cost field | 222–225 | ✅ Done | `.cost-wrap`, `.cost-symbol`, `.cost-input` |
 | Split slider | 227–240 | ✅ Done | `.split-wrap` through `.split-pct` |
 | Add item button | 242–244 | ✅ Done | `.add-item-btn` |
-| Billing status card | 246–274 | ⚠️ Placeholder | Written in style-new.css but interaction pattern will be replaced; not final |
+| Billing status card | 246–274 | ⚠️ Placeholder | Written in style-new.css but interaction pattern will be replaced; not final. |
 | Form sticky header + actions | 276–280 | ✅ Done | `.form-sticky-header`, `.form-sticky-inner`, `.form-sticky-title`, `.form-sticky-actions`, `.form-bottom-actions` |
-| Buttons | 282–302 | ⏳ Partial | `.btn-sm`, `.btn-link-destructive` added; split button not started |
+| Buttons | 282–302 | ⏳ Partial | `.btn-sm`, `.btn-link-destructive` added; split button not started. |
 | Split button | 304–311 | ⬜ Not started | |
-| Toast | 352 | ⬜ Not started | |
-| Modal | 314–322 | ✅ Done | `.modal-overlay` through `.modal-footer-right`; overlay uses `color-mix()` to reference `--color-foreground` at 55% opacity rather than a hardcoded rgba |
-| Billing summary table | 324–332 | ⬜ Not started | |
+| Modal | 314–322 | ✅ Done | `.modal-overlay` through `.modal-footer-right` |
+| Billing summary table | 324–332 | ⚠️ Partial | Customer Report migrated to `.table` + inline styles. Billing steps 2–4 may still reference `.summary-table`, `.total-row`, `.right`. |
 | Step indicator | 334–341 | ⬜ Not started | |
-| PDF preview | 343–350 | ⬜ Not started | |
+| PDF preview | 343–350 | ⚠️ Partial | Legacy token vars replaced; hardcoded `#f8f8f8` → `var(--color-secondary)`, `borderRadius` → `var(--radius-md)`. |
+| Toast | 352 | ⬜ Not started | |
 | Loading screen + spinner | 355–358 | ⬜ Not started | |
 | Keyframe animations | 360–364 | ⬜ Not started | |
 | Media queries | 366–387 | ⬜ Not started | |
