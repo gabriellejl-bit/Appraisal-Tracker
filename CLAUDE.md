@@ -91,7 +91,9 @@ Full project reference: `PROJECT.md` — read for DB schema, business rules, and
 3. `styles.css` — legacy (retire when migration complete)
 4. `style-new.css` — migration target; unlayered rules here override both legacy and layered components
 
-**Cascade note:** `styles.css` is unlayered and loads after `@layer components`, so any property in `styles.css` beats `components.css`. Re-assert critical overrides unlayered in `style-new.css`.
+**CRITICAL — `styles.css` is legacy. Never read it, never reference it, never diagnose from it.** It is being retired. If a component looks wrong, the fix is always to re-assert the correct value in `style-new.css` (which loads last and wins). Do not open `styles.css` to understand why something looks wrong.
+
+**CSS Cascade Rule (CRITICAL):** `@layer components` has *lower* priority than unlayered rules. Load order: tokens-html.css → components.css (`@layer`) → styles.css (unlayered) → style-new.css (unlayered, wins). So legacy `styles.css` beats `components.css`. To fix a visual bug: (1) identify what's overriding it in `styles.css`, (2) re-assert the property in `style-new.css` (unlayered). Never debug or style in `components.css` — it will lose. See `SYNC.md` session learnings for the incident that taught this.
 
 **Figma source:** File key `Cc9WVPSYJoQDiSV4LV7Edk`. Raw colour variables in node `842-49172`.
 
@@ -101,7 +103,9 @@ Full project reference: `PROJECT.md` — read for DB schema, business rules, and
 
 **Cache-busting:** `AppraisalTracker-dev.html` stylesheet links include `?v=N`. Increment N whenever CSS files change during active development to force browser cache refresh.
 
-**Key component classes:** `.label` (text-sm, uppercase, bold), `.input` / `.select` (44px height, 16px side padding, radius-xl), `.btn-primary` (gold), `.btn-secondary` (outline), `.btn-sm` (size modifier), `.btn-link`, `.btn-destructive`. Form layout: `.form-section` (secondary bg card), `.form-grid` (2-col), `.item-card` (white bg, secondary inputs inside).
+**Always check Basecoat/shadcn first.** Before writing any new component CSS, check whether Basecoat (`components.css`) already has it or whether it should be ported from Basecoat source. Never diverge from the base component without a logged reason in `SYNC.md`.
+
+**Key component classes:** `.label` (text-sm, uppercase, bold), `.input` / `.select` (44px height, 16px side padding, radius-xl), `.btn-primary` (gold), `.btn-secondary` (outline), `.btn-sm` (size modifier), `.btn-link`, `.btn-destructive`, `.table` (full-width data table). Form layout: `.form-section` (secondary bg card), `.form-grid` (2-col), `.item-card` (white bg, secondary inputs inside).
 
 ## Pre-Delivery Checklist
 

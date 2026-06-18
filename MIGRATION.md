@@ -32,7 +32,7 @@ are lower priority), but any property only defined in `components.css` takes eff
 | Section | Lines | Status | Notes |
 |---|---|---|---|
 | `:root` token definitions | 1–23 | ⏳ Replace | Will be replaced entirely by `tokens-html.css` — delete when done |
-| Typography scale (`.h1`–`.mono`) | 27–52 | ⬜ Not started | |
+| Typography scale (`.h1`–`.h4`) | 27–52 | ✅ Done | `.h1`–`.h4` added to `style-new.css` using tokens. No uppercase on `.h4` globally — applied locally via inline style where needed. `.para-*`/`.mono` not yet replaced (body inherits from base; no matching new classes yet) |
 | App shell (`.app-shell`) | 54–55 | ⬜ Not started | |
 | Side nav | 57–74 | ⬜ Not started | |
 | App body + topbar | 76–84 | ⬜ Not started | |
@@ -40,7 +40,7 @@ are lower priority), but any property only defined in `components.css` takes eff
 | Main area | 97–99 | ⬜ Not started | |
 | Dashboard | 101–133 | ⬜ Not started | |
 | Content grid + panels | 135–143 | ⬜ Not started | |
-| Table | 145–164 | ⬜ Not started | |
+| Table (Records results) | 145–164 | ✅ Done | `.table`, `.table-header`, `.table-row-selected`, text truncation, badge retirement, row selection state |
 | Sidebar + quick actions | 166–177 | ⬜ Not started | |
 | Search bar | 179–184 | ⬜ Not started | |
 | Form layout + sections | 186–201 | ✅ Done | `.form-wrap`, `.form-section`, `.form-section-title`, `.form-grid`, `.field-full`, `.label`, `.error-text` |
@@ -54,7 +54,7 @@ are lower priority), but any property only defined in `components.css` takes eff
 | Buttons | 282–302 | ⏳ Partial | `.btn-sm`, `.btn-link-destructive` added; split button not started |
 | Split button | 304–311 | ⬜ Not started | |
 | Toast | 352 | ⬜ Not started | |
-| Modal | 314–322 | ⬜ Not started | |
+| Modal | 314–322 | ✅ Done | `.modal-overlay` through `.modal-footer-right`; overlay uses `color-mix()` to reference `--color-foreground` at 55% opacity rather than a hardcoded rgba |
 | Billing summary table | 324–332 | ⬜ Not started | |
 | Step indicator | 334–341 | ⬜ Not started | |
 | PDF preview | 343–350 | ⬜ Not started | |

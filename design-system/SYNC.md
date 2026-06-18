@@ -22,8 +22,19 @@ Tracks changes made in this project's design system and whether they should be u
 
 | Item | File | Status | Reason |
 |---|---|---|---|
+| `.table` component (port of Basecoat Tailwind → plain CSS) | `components/html/components.css` | `[BASE]` | Ported from Basecoat source; already in base, needs verification |
+| `.table-row-selected` (selected row highlight) | `components/html/components.css` | `[BASE]` | Generic table pattern — rows can be selected in any table |
 | Input / Select error state (`.input.error`, `.select.error`) | `components/html/components.css` | `[BASE]` | Generic form validation pattern; missing from base |
-| `--color-border-subtle` semantic token (currently using `--color-stone-200` directly) | `tokens/tokens.css` | `[BASE]` | Needed for section dividers; `--color-border` is too heavy, no lighter variant exists |
+| Text overflow handling in table cells | `components/html/components.css` | `[BASE]` | Added `overflow: hidden; text-overflow: ellipsis` to `.table td` for truncation |
+
+### Records page audit — new components created
+
+| Item | File | Status | Reason |
+|---|---|---|---|
+| `.batch-toolbar` (toolbar for row selection actions) | `style-new.css` | `[PROJECT]` | App-specific pattern for batch operations; unlikely to be generic enough for base |
+| `.empty-state` + `.empty-state-title` + `.empty-state-hint` | `style-new.css` | `[PROJECT]` | App-specific messaging layout; may be useful in base but needs review |
+| `.label-compact` (filter bar label variant) | `style-new.css` | `[PROJECT]` | Suppresses margin-bottom for filter bar context only |
+| `.batch-toolbar` border color | `style-new.css` | `[PROJECT]` | Uses global `--color-border`, not brand-specific |
 
 ---
 
@@ -51,6 +62,19 @@ Tracks changes made in this project's design system and whether they should be u
 | Input / Textarea / Select `border-radius: radius-xl` | `components/html/components.css` | `[PROJECT]` | Project rounding preference; base uses `radius-md` |
 | Input / Textarea / Select border → `color-border` (was `color-input`) | `components/html/components.css` | `[PROJECT]` | Project uses stone border token; `color-input` is the shadcn convention in base |
 | Input / Select padding `0 var(--space-4)` (16px sides, 0 top/bottom) | `style-new.css` | `[PROJECT]` | Height is fixed at 44px so no top/bottom padding needed; md (16px) side padding per Figma |
+
+---
+
+## Session learnings — do not repeat
+
+| Issue | What went wrong | Rule |
+|---|---|---|
+| Proposed new CSS classes | Suggested `.form-heading` etc. instead of using existing `.h2` | Never propose a new class — check `style-new.css` and `components.css` first; use inline token vars if nothing fits |
+| Legacy `--space-*` names in Figma | Figma uses old scale names (`--space-lg`, `--space-md`). See `design-system/spacing-reference.md` (user-created) for the full conversion table | Always convert to new numeric tokens (`--space-5`, `--space-4` etc.) — never write legacy names into CSS or JS |
+| `--ember-light` bug | Legacy `--ember-light` was set to the same hex as `--ember` (solid red, not light). `fully-billed-warning` appeared red-on-red | `style-new.css` fixes this by using `--color-red-50` — no action needed, but confirms legacy root vars are unreliable |
+| Uppercase on heading classes | `.h4` in legacy `styles.css` had `text-transform: uppercase` baked in | Keep `.h4` global, apply uppercase locally via inline style only where the design calls for it |
+| CSS cascade misunderstanding | Assumed `@layer components` beats unlayered rules; spent time debugging why token colors weren't applying | **Critical rule:** `@layer` has *lower* priority than unlayered rules. Legacy `styles.css` (unlayered) beats `components.css` (@layer). Solution: re-assert in `style-new.css` (unlayered, loads last) to win. Never debug cascade without checking load order |
+| Inline styles as workaround | Added `.batch-toolbar` but kept trying to style it without checking what was overriding | Always check: (1) what classes are applied, (2) does legacy `styles.css` have a rule, (3) if yes, re-assert in `style-new.css`. Default pattern: never style something twice |
 
 ---
 

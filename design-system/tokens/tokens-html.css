@@ -340,6 +340,7 @@
   --color-info-foreground:        var(--color-white);
 
   --color-border: var(--color-stone-500);
+  --color-border-light: var(--color-stone-300);
   --color-input:  var(--color-zinc-200);
   --color-ring:   var(--color-zinc-400);
 
