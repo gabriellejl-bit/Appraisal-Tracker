@@ -765,8 +765,8 @@ function renderRecords(){
 
   // Empty state
   if(!filtered.length){
-    const em=h('div',{style:{textAlign:'center',padding:'60px 20px'}});em.innerHTML=I.empty;
-    em.append(h('p',{style:{fontFamily:'var(--font-serif)',fontSize:'var(--text-base)',color:'var(--color-secondary-foreground)',margin:'var(--space-4) 0 var(--space-1)'}},'No packets match your filters'),h('p',{style:{fontSize:'var(--text-sm)',color:'var(--color-muted-foreground)'}},'Try adjusting the filters above'));
+    const em=h('div',{className:'empty-state'});em.innerHTML=I.empty;
+    em.append(h('p',{className:'empty-state-title'},'No packets match your filters'),h('p',{className:'empty-state-hint'},'Try adjusting the filters above'));
     c.append(em);return c;
   }
 

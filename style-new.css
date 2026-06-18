@@ -747,6 +747,28 @@
   flex-wrap:     wrap;
 }
 
+/* ============================================================
+   EMPTY STATE
+   Message shown when table has no matching results.
+   ============================================================ */
+
+.empty-state {
+  text-align: center;
+  padding:    var(--space-15) var(--space-5);
+}
+
+.empty-state-title {
+  font-family: var(--font-serif);
+  font-size:   var(--text-base);
+  color:       var(--color-secondary-foreground);
+  margin:      var(--space-4) 0 var(--space-1);
+}
+
+.empty-state-hint {
+  font-size: var(--text-sm);
+  color:     var(--color-muted-foreground);
+}
+
 
 /* Small size modifier — used on form action buttons */
 .btn-sm {
