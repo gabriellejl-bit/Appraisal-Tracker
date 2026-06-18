@@ -704,6 +704,11 @@
   color:      var(--color-secondary-foreground);
 }
 
+/* Table row selected state — applied when row checkbox is checked */
+.table tbody tr.table-row-selected {
+  background: var(--color-gold-100);
+}
+
 /* ============================================================
    BADGES
    Re-assert basecoat component — styles.css has legacy rules

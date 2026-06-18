@@ -793,7 +793,9 @@ function renderRecords(){
     const retName=retailerName(r.retailer_id);
     const bl=packetBillingLabel(r);const sn=bl||statusName(r.status_id);
     const rowClick=e=>{e.stopPropagation();S.editId=r.id;S.view='edit';renderAsync();};
-    tb.append(h('tr',{style:{background:S.selectedPacketIds.has(r.id)?'var(--color-gold-100)':'',cursor:'pointer'},onClick:rowClick},
+    const trAttrs={style:{cursor:'pointer'},onClick:rowClick};
+    if(S.selectedPacketIds.has(r.id))trAttrs.className='table-row-selected';
+    tb.append(h('tr',trAttrs,
       h('td',{style:{width:'36px'}},cb),
       h('td',{},r.date),h('td',{className:'mono'},r.customer_ref),
       h('td',{className:'name-cell'},r.surname),
