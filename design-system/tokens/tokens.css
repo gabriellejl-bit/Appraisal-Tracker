@@ -1,13 +1,11 @@
-/* ============================================================
-   TOKENS — PLAIN CSS
-   Plain-CSS export of tokens.css for no-build HTML projects.
-   Source of truth: design-system/tokens/tokens.css (@theme block).
-   Keep in sync manually when tokens.css changes.
-   ============================================================ */
+@import "tailwindcss";
 
-:root {
-
-  /* -- Colour scale ----------------------------------------- */
+@theme {
+  /* ============================================================
+     COLOUR SCALE
+     Raw palette — never use these directly in components.
+     Reference via semantic tokens below.
+     ============================================================ */
 
   /* Slate */
   --color-slate-50:  oklch(0.984 0.003 247.858);
@@ -299,7 +297,7 @@
   --color-rose-900: oklch(0.41  0.159  10.272);
   --color-rose-950: oklch(0.271 0.105  12.094);
 
-  /* Gold (app-specific) */
+  /* App-specific palettes (not in Tailwind defaults) */
   --color-gold-50:  oklch(0.987 0.0262 102.3);
   --color-gold-100: oklch(0.957 0.0609  94.1);
   --color-gold-200: oklch(0.927 0.1161  95.9);
@@ -312,24 +310,34 @@
   --color-gold-900: oklch(0.338 0.0560  47.4);
   --color-gold-950: oklch(0.241 0.0296  29.8);
 
-  /* -- Semantic tokens -------------------------------------- */
+  /* ============================================================
+     SEMANTIC TOKENS
+     These are what components use. Change the scale reference
+     here to retheme the entire system.
+     ============================================================ */
 
+  /* Surfaces */
   --color-background:         var(--color-white);
   --color-foreground:         var(--color-zinc-950);
 
+  /* Primary action */
   --color-primary:            var(--color-gold-600);
   --color-primary-foreground: var(--color-stone-50);
   --color-primary-hover:      var(--color-gold-800);
 
+  /* Secondary */
   --color-secondary:            var(--color-stone-100);
   --color-secondary-foreground: var(--color-stone-900);
 
+  /* Muted */
   --color-muted:            var(--color-zinc-100);
   --color-muted-foreground: var(--color-zinc-500);
 
+  /* Accent */
   --color-accent:            var(--color-zinc-100);
   --color-accent-foreground: var(--color-zinc-900);
 
+  /* Feedback */
   --color-destructive:            var(--color-red-500);
   --color-destructive-foreground: var(--color-white);
   --color-success:                var(--color-green-500);
@@ -339,22 +347,28 @@
   --color-info:                   var(--color-blue-500);
   --color-info-foreground:        var(--color-white);
 
+  /* Chrome */
   --color-border: var(--color-stone-500);
-  --color-border-light: var(--color-stone-300);
   --color-input:  var(--color-zinc-200);
   --color-ring:   var(--color-zinc-400);
 
+  /* Card / Popover */
   --color-card:            var(--color-white);
   --color-card-foreground: var(--color-zinc-950);
   --color-popover:            var(--color-white);
   --color-popover-foreground: var(--color-zinc-950);
 
+  /* Project button brand colours */
   --color-btn-brand-border:       var(--color-gold-800);
   --color-btn-brand-hover-bg:     var(--color-gold-800);
   --color-btn-brand-hover-border: var(--color-stone-300);
   --color-btn-brand-hover-fg:     var(--color-stone-50);
 
-  /* -- Spacing --------------------------------------------- */
+  /* ============================================================
+     SPACING
+     Maps to Tailwind's default spacing scale.
+     Usage: padding: var(--space-4)  → 1rem
+     ============================================================ */
 
   --space-px:  1px;
   --space-0:   0px;
@@ -392,28 +406,32 @@
   --space-80:  20rem;
   --space-96:  24rem;
 
-  /* -- Typography ------------------------------------------ */
+  /* ============================================================
+     TYPOGRAPHY
+     ============================================================ */
 
   --font-sans:  'DM Sans', ui-sans-serif, system-ui, sans-serif;
   --font-serif: 'Montserrat', ui-serif, serif;
   --font-mono:  'DM Mono', ui-monospace, monospace;
 
-  --text-2xs:       0.6875rem;
-  --text-xs:        0.75rem;
-  --text-sm:        0.875rem;
-  --text-base:      1rem;
-  --text-lg:        1.125rem;
-  --text-xl:        1.25rem;
-  --text-heading-3: 1.3125rem;
-  --text-2xl:       1.5rem;
-  --text-3xl:       1.875rem;
-  --text-4xl:       2.25rem;
-  --text-5xl:       3rem;
-  --text-6xl:       3.75rem;
-  --text-7xl:       4.5rem;
-  --text-8xl:       6rem;
-  --text-9xl:       8rem;
+  /* Font sizes */
+  --text-2xs:  0.6875rem; /* 11px — app-specific, para-mini */
+  --text-xs:   0.75rem;
+  --text-sm:   0.875rem;
+  --text-base: 1rem;
+  --text-lg:   1.125rem;
+  --text-xl:   1.25rem;
+  --text-heading-3: 1.3125rem; /* 21px — app-specific, sits between xl and 2xl */
+  --text-2xl:  1.5rem;
+  --text-3xl:  1.875rem;
+  --text-4xl:  2.25rem;
+  --text-5xl:  3rem;
+  --text-6xl:  3.75rem;
+  --text-7xl:  4.5rem;
+  --text-8xl:  6rem;
+  --text-9xl:  8rem;
 
+  /* Font weights */
   --font-thin:       100;
   --font-extralight: 200;
   --font-light:      300;
@@ -424,6 +442,7 @@
   --font-extrabold:  800;
   --font-black:      900;
 
+  /* Line heights */
   --leading-none:    1;
   --leading-tight:   1.25;
   --leading-snug:    1.375;
@@ -431,6 +450,7 @@
   --leading-relaxed: 1.625;
   --leading-loose:   2;
 
+  /* Letter spacing */
   --tracking-tighter: -0.05em;
   --tracking-tight:   -0.025em;
   --tracking-normal:  0em;
@@ -438,7 +458,9 @@
   --tracking-wider:   0.05em;
   --tracking-widest:  0.1em;
 
-  /* -- Shape ----------------------------------------------- */
+  /* ============================================================
+     SHAPE
+     ============================================================ */
 
   --radius-none: 0px;
   --radius-xs:   0.25rem;
@@ -450,14 +472,18 @@
   --radius-3xl:  1.5rem;
   --radius-full: 9999px;
 
-  /* -- Shadow ---------------------------------------------- */
+  /* ============================================================
+     SHADOW
+     ============================================================ */
 
   --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 0.05);
   --shadow-md: 0 4px 6px -1px oklch(0 0 0 / 0.1), 0 2px 4px -2px oklch(0 0 0 / 0.1);
   --shadow-lg: 0 10px 15px -3px oklch(0 0 0 / 0.1), 0 4px 6px -4px oklch(0 0 0 / 0.1);
   --shadow-xl: 0 20px 25px -5px oklch(0 0 0 / 0.1), 0 8px 10px -6px oklch(0 0 0 / 0.1);
 
-  /* -- Animation ------------------------------------------- */
+  /* ============================================================
+     ANIMATION
+     ============================================================ */
 
   --duration-fast: 150ms;
   --duration-base: 200ms;
@@ -465,17 +491,45 @@
   --ease-default:  cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* -- Base resets ------------------------------------------- */
+/* ============================================================
+   BASE LAYER
+   Global resets and root defaults.
+   ============================================================ */
 
-*, *::before, *::after {
-  box-sizing: border-box;
-}
+@layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+    border-color: var(--color-border);
+  }
 
-body {
-  background-color: var(--color-background);
-  color:            var(--color-foreground);
-  font-family:      var(--font-sans);
-  font-size:        var(--text-base);
-  line-height:      var(--leading-normal);
-  -webkit-font-smoothing: antialiased;
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: var(--leading-normal);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Dark mode */
+  .dark {
+    --color-background:         var(--color-zinc-950);
+    --color-foreground:         var(--color-zinc-50);
+    --color-primary:            var(--color-gold-600);
+    --color-primary-foreground: var(--color-stone-50);
+    --color-primary-hover:      var(--color-gold-800);
+    --color-secondary:            var(--color-stone-800);
+    --color-secondary-foreground: var(--color-stone-50);
+    --color-muted:            var(--color-zinc-800);
+    --color-muted-foreground: var(--color-zinc-400);
+    --color-accent:            var(--color-zinc-800);
+    --color-accent-foreground: var(--color-zinc-50);
+    --color-border: var(--color-stone-700);
+    --color-input:  var(--color-zinc-800);
+    --color-ring:   var(--color-zinc-600);
+    --color-card:            var(--color-zinc-950);
+    --color-card-foreground: var(--color-zinc-50);
+    --color-popover:            var(--color-zinc-950);
+    --color-popover-foreground: var(--color-zinc-50);
+  }
 }

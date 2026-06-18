@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## CRITICAL: Branch Discipline
+
+**Always work on `dev` — NEVER commit to `main` directly.**
+
+- All development commits go to `dev`
+- `main` is production-only — updated only when merging `dev` for a release
+- A pre-commit hook enforces this: any commit attempt on `main` will be blocked with an error
+- If you find yourself on `main`, stop and run `git checkout dev` before making any changes
+
 ## CRITICAL: Dev/Prod File Discipline
 
 **Always edit `AppraisalTracker-dev.html` — NEVER `index.html` during development.**
@@ -74,19 +83,29 @@ Full project reference: `PROJECT.md` — read for DB schema, business rules, and
 
 ## Design System & Styling
 
-**Reference:** See `project_styling_progress.md` in memory for complete styling details. Figma file key: `bDb5CJBIcdtEKdKIsGYhs4`.
+**In-progress migration** from `styles.css` (legacy) to `style-new.css` (token-based). See `MIGRATION.md` for status per section.
 
-**Spacing:** `--space-xs` (8px) → `--space-6xl` (80px)
+**Stylesheet load order:**
+1. `design-system/tokens/tokens-html.css` — plain `:root {}` token variables (converted from `tokens.css` `@theme {}`)
+2. `design-system/components/html/components.css` — base component classes (`.input`, `.label`, `.btn-*`, etc.) in `@layer components`
+3. `styles.css` — legacy (retire when migration complete)
+4. `style-new.css` — migration target; unlayered rules here override both legacy and layered components
 
-**Corner radius:** `--rounded-md` (6px), `--rounded-lg` (8px), `--rounded-xl` (12px), `--rounded-2xl` (16px), `--rounded-3xl` (24px), `--rounded-full`
+**CRITICAL — `styles.css` is legacy. Never read it, never reference it, never diagnose from it.** It is being retired. If a component looks wrong, the fix is always to re-assert the correct value in `style-new.css` (which loads last and wins). Do not open `styles.css` to understand why something looks wrong.
 
-**Typography:** `.h1`–`.h4` (Montserrat headings), `.para-lg`, `.para`, `.para-sm`, `.para-mini` (DM Sans body), `.caption`, `.mono`
+**CSS Cascade Rule (CRITICAL):** `@layer components` has *lower* priority than unlayered rules. Load order: tokens-html.css → components.css (`@layer`) → styles.css (unlayered) → style-new.css (unlayered, wins). So legacy `styles.css` beats `components.css`. To fix a visual bug: (1) identify what's overriding it in `styles.css`, (2) re-assert the property in `style-new.css` (unlayered). Never debug or style in `components.css` — it will lose. See `SYNC.md` session learnings for the incident that taught this.
 
-**Buttons:** `.btn-primary` (gold), `.btn-secondary` (outline), `.btn-link` (text only), `.btn-destructive`, `.btn-sm` (size modifier)
+**Figma source:** File key `Cc9WVPSYJoQDiSV4LV7Edk`. Raw colour variables in node `842-49172`.
 
-**Form fields:** Inputs/selects = white bg, `1px solid var(--border)`, `--rounded-xl`, `var(--space-sm)` padding. Item area inputs override to secondary bg. Customer ref composite: prefix = warm bg (`--bg-warm`) + 3-sided border (no right), suffix = 3-sided border (no left) — looks like one joined field.
+**CRITICAL — OKLCH palette:** `tokens-html.css` and `tokens.css` contain OKLCH values converted from exact Figma hex values. Never regenerate these from Tailwind defaults or interpolate a scale — the brand palette (stone, gold, teal, etc.) differs significantly from Tailwind's equivalents. Always convert from Figma hex using the precise hex → OKLCH formula.
 
-**Colour tokens:** Prefer Figma scale names — `--secondary`, `--foreground`, `--secondary-foreground`, `--brand-neutral-300`, `--brand-neutral-600`, `--violet-800`, `--gold-400`. Avoid legacy names (`--plum`, `--sage`, etc.).
+**Token naming:** Use new design system names — `--color-secondary`, `--color-foreground`, `--color-stone-300`, `--color-gold-400`, `--color-violet-700`, etc. Avoid all legacy names (`--plum`, `--sage`, `--bg-warm`, `--text-sec`, `--rounded-xl`, `--space-md`, etc.).
+
+**Cache-busting:** `AppraisalTracker-dev.html` stylesheet links include `?v=N`. Increment N whenever CSS files change during active development to force browser cache refresh.
+
+**Always check Basecoat/shadcn first.** Before writing any new component CSS, check whether Basecoat (`components.css`) already has it or whether it should be ported from Basecoat source. Never diverge from the base component without a logged reason in `SYNC.md`.
+
+**Key component classes:** `.label` (text-sm, uppercase, bold), `.input` / `.select` (44px height, 16px side padding, radius-xl), `.btn-primary` (gold), `.btn-secondary` (outline), `.btn-sm` (size modifier), `.btn-link`, `.btn-destructive`, `.table` (full-width data table). Form layout: `.form-section` (secondary bg card), `.form-grid` (2-col), `.item-card` (white bg, secondary inputs inside).
 
 ## Pre-Delivery Checklist
 
