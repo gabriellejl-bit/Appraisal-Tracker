@@ -706,7 +706,7 @@
 
 /* Table row selected state — applied when row checkbox is checked */
 .table tbody tr.table-row-selected {
-  background: var(--color-gold-100);
+  background: var(--color-stone-200);
 }
 
 /* ============================================================
@@ -744,7 +744,7 @@
    ============================================================ */
 
 .batch-toolbar {
-  background:    var(--color-gold-100);
+  background:    var(--color-stone-200);
   border:        1px solid var(--color-primary);
   border-radius: var(--radius-lg);
   padding:       var(--space-2-5) var(--space-4);
