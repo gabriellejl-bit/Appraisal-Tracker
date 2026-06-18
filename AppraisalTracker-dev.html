@@ -744,7 +744,7 @@ function renderRecords(){
 
   // Batch toolbar
   if(selCount>0){
-    const bb=h('div',{style:{background:'var(--color-gold-100)',border:'1px solid var(--color-primary)',borderRadius:'var(--radius-lg)',padding:'var(--space-2-5) var(--space-4)',marginBottom:'var(--space-3)',display:'flex',alignItems:'center',gap:'var(--space-3)',flexWrap:'wrap'}});
+    const bb=h('div',{className:'batch-toolbar'});
     bb.append(h('span',{style:{fontSize:'var(--text-sm)',fontWeight:'var(--font-semibold)',color:'var(--color-foreground)',flex:'1'}},selCount+' packet'+(selCount!==1?'s':'')+' selected'));
     const sd=h('select',{className:'select',style:{width:'200px'}});
     sd.append(h('option',{value:''},'Change status to...'));
