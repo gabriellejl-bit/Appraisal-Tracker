@@ -654,6 +654,7 @@
 
   .table th             { padding: var(--space-3) var(--space-4); text-align: left; vertical-align: middle; white-space: nowrap; }
   .table td             { padding: var(--space-3) var(--space-4); vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-sans); font-size: var(--text-sm); font-weight: var(--font-normal); line-height: var(--leading-normal); color: var(--color-foreground); }
+  .table tbody tr.table-row-selected { background: var(--color-stone-200); }
   .table caption        { margin-top: var(--space-4); font-size: var(--text-sm); color: var(--color-muted-foreground); }
 
 }
