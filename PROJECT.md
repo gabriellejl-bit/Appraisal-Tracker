@@ -9,265 +9,210 @@ Billing tracker for jewellery appraisal work. Paula and Gabby invoice jewellery 
 
 ## Stack
 - Frontend: Single HTML file (index.html) + external stylesheet (styles.css) - vanilla JS, no framework
-- CSS: Custom properties for design tokens, no build step
 - Database: Supabase (PostgreSQL) via REST API - no SDK, raw fetch
 - Hosting: GitHub Pages
-- Auth: None yet - user toggle in topbar. Supabase email/password planned.
-- RLS enabled with open policies (no auth yet)
+- Auth: None yet — user toggle in topbar. Supabase email/password planned.
 
 ## Environments
 
 | | Production | Dev |
 |---|---|---|
-| File | index.html (GitHub) | AppraisalTracker-dev.html (local only, never committed) |
+| File | index.html | AppraisalTracker-dev.html (local only) |
 | Supabase URL | https://ytmyfarsptkezxkgpcbo.supabase.co | https://xwripwrfqdddfomzfjaq.supabase.co |
 | Supabase Key | sb_publishable_2POAMJdA5U1FPSgxzDy1oA_EfCnF6I2 | sb_publishable_FktRKmVGhdS5SzeJ7g6phQ_n9m4iDcm |
 | Browser tab | "Billing Tracker" | "Billing Tracker [DEV]" |
 
 Only difference between files: SB_URL, SB_KEY, title tag. Dev is always ahead of or equal to prod.
 
-Download production file: open in browser, File -> Save Page As (Cmd+S on Mac).
-
-**IMPORTANT - Dev/Prod discipline:**
-- Always test in dev first. Never write to prod DB during development.
-- Claude always delivers BOTH files: AppraisalTracker-dev.html (dev credentials) for testing, and index.html (prod credentials) only when committing.
-- The downloaded file from GitHub Pages always has prod credentials - never test directly from it.
-- To create dev file: swap SB_URL, SB_KEY, and title tag only. Everything else identical.
-- DB changes: always run in dev first, verify, then run in prod.
+**Dev/Prod discipline:** Always test in dev first. DB changes: run in dev, verify, then prod. To create dev file: swap SB_URL, SB_KEY, and title tag only.
 
 ---
 
 ## Database Schema
 
 ### users
-id, name, slug (UNIQUE), colour, gst_registered, gst_rate DECIMAL, income_tax_rate DECIMAL, active
+`id, name, slug (UNIQUE), colour, gst_registered, gst_rate DECIMAL, income_tax_rate DECIMAL, active`
 - Gabby: gabby, #5C7A6B, GST registered 15%, income tax 33%
 - Paula: paula, #6E4B5E, not GST registered, income tax 17.5%
-- Nav toggle built from active users. Falls back to hardcoded if not loaded.
 
 ### billing_statuses (lookup)
-id, name, show_in_dashboard, show_in_reports
-Values: New (1), Hold from Billing (2), Billed (3), Archived (4 - hidden everywhere)
-Always use name in UI. "Billed" is auto-managed only - never set manually.
+`id, name, show_in_dashboard, show_in_reports`
+Values: New (1), Hold from Billing (2), Billed (3), Archived (4 — hidden everywhere)
+"Billed" is auto-managed only — never set manually.
 
 ### retailers (lookup)
-id, name, code INTEGER (displays as "001"), discount_pct DECIMAL (default 0), combined_billing BOOLEAN (default false)
-Values: Alexandra (1, code 1), Queenstown (2, code 2), Nationwide Jewellers (3, code 3, discount 8.5%, combined_billing true)
-Alexandra and Queenstown display as "Jamies Alexandra"/"Jamies Queenstown" in PDFs (mapped in generatePDFContent).
-WARNING: Never append &select=* to sbAll calls - sbAll already includes ?select=* and doubling it causes duplicate rows returned from Supabase.
+`id, name, code INTEGER, discount_pct DECIMAL (default 0), combined_billing BOOLEAN (default false), requires_shipping BOOLEAN (default false)`
+- Alexandra (1, code 1) — Jamies Alexandra in PDFs
+- Queenstown (2, code 2) — Jamies Queenstown in PDFs
+- Nationwide Jewellers (3, code 3, discount 8.5%, combined_billing true, requires_shipping true)
+- Direct (4, requires_shipping true)
+
+WARNING: Never append `&select=*` to sbAll calls — sbAll already includes `?select=*`.
 
 ### items (lookup)
-name TEXT PK, display_order INTEGER
-WARNING: no id column. Never sort with order=id.asc. Sort: &order=display_order.asc
+`name TEXT PK, display_order INTEGER`
+WARNING: no id column. Sort: `&order=display_order.asc`
 
 ### job_types (lookup)
-id, name, cost DECIMAL, display_order INTEGER. Sort: &order=display_order.asc
+`id, name, cost DECIMAL, display_order INTEGER`. Sort: `&order=display_order.asc`
 
-### retailer_job_type_costs
-retailer_id FK, job_type_id FK, cost DECIMAL. PRIMARY KEY (retailer_id, job_type_id).
-Created for future per-retailer pricing. Currently empty - NJ uses flat discount_pct instead.
-RLS enabled with open policy.
+### sub_customers
+`id, retailer_id FK, name TEXT, display_order INTEGER, address_line1 TEXT, suburb TEXT, city TEXT, postcode TEXT`
+NJ sub-customers. Loaded into `S.subCustomers`. Address fields used in tax invoices.
 
 ### packets
-id TEXT PK, date TEXT (DD MMM YYYY), retailer_id FK, customer_ref TEXT, sub_customer TEXT (nullable, NJ only), surname TEXT, status_id FK, paula_billed BOOLEAN, gabby_billed BOOLEAN, created/modified TEXT
+`id TEXT PK, date TEXT (DD MMM YYYY), retailer_id FK, customer_ref TEXT, sub_customer TEXT (nullable, NJ only), surname TEXT, status_id FK, paula_billed BOOLEAN, gabby_billed BOOLEAN, shipping_run_id FK (nullable), created/modified TEXT`
 
 ### packet_items
-id TEXT PK, packet_id FK, item TEXT, job_type_id FK, cost DECIMAL, paula_pct INTEGER, gabrielle_pct INTEGER (sum to 100)
+`id TEXT PK, packet_id FK, item TEXT, job_type_id FK, cost DECIMAL, paula_pct INTEGER, gabrielle_pct INTEGER (sum to 100)`
+
+### shipping_runs
+`id TEXT PK, ship_date TEXT, shipping_cost DECIMAL (GST-INCLUSIVE), tracking_last4 TEXT, retailer_id FK, sub_customer_name TEXT (nullable), invoice_number TEXT (nullable, format INV-XXXX), created TEXT`
+
+**CRITICAL — shipping_cost is stored GST-inclusive.** Always divide by 1.15 to get ex-GST amount for billing display. `getShippingForBilling()` pre-computes `totalExGST` and `bySubCustomerExGST`.
 
 ### billing_runs
-id TEXT PK, run_date TEXT, user_name TEXT (slug), retailer_ids TEXT (csv), packet_ids TEXT (csv), status TEXT, created TEXT
+`id TEXT PK, run_date TEXT, user_name TEXT (slug), retailer_ids TEXT (csv), packet_ids TEXT (csv), status TEXT, created TEXT`
 
-### appraisals - legacy, not written to
+### retailer_job_type_costs
+`retailer_id FK, job_type_id FK, cost DECIMAL`. Currently empty — reserved for future per-retailer pricing.
 
 ---
 
 ## Key Concepts
 
-**Cost split:** Calculated on the fly. packetCosts(id) returns {total, paula, gabby}. Applies retailer discount_pct before splitting. Formula: cost * discountMult * userPct%.
+**Cost split:** `packetCosts(id)` returns `{total, paula, gabby}`. Applies retailer `discount_pct` before splitting. Formula: `cost * discountMult * userPct%`.
 
-**Dashboard dollar cards:** Show POST-TAX, POST-DISCOUNT take-home income. Formula: cost * discountMult * userPct% * (1 - incomeTaxRate%). getDollarStats() applies both discount and income_tax_rate from users table.
+**Dashboard dollar cards:** POST-TAX, POST-DISCOUNT take-home income. `getDollarStats()` applies both `discount_pct` and `income_tax_rate`.
 
-**Per-user billing:** paula_billed/gabby_billed track independently. When both true (or one user has 0% on all items), status_id auto-sets to Billed. Never set Billed manually.
+**Per-user billing:** `paula_billed`/`gabby_billed` track independently. When both true (or one user has 0% on all items), status auto-sets to Billed. Never set Billed manually.
 
-**Billing display:** packetBillingLabel(pkt) returns "Billed (Paula)", "Billed (Gabby)", "Fully Billed", or null. Also returns "Fully Billed" when one user has billed and the other has 0% on all items.
+**GST:** Conditional per user (`gst_registered` from users table). Gabby: subtotal + GST + Total. Paula: subtotal + Total only. Applied AFTER discount. Rate from `users.gst_rate`.
 
-**Workflow statuses:** New, Hold from Billing, Archived. Hold freezes billing toggles but allows editing details/items. Archived freezes billing toggles.
+**Financial year:** 1 April – 31 March (NZ).
 
-**GST:** Conditional per user. Gabby: subtotal + GST + Total. Paula: subtotal + Total only. Rates from users table. Applied AFTER discount.
-
-**Financial year:** 1 April - 31 March (NZ).
-
-**Non-critical loading:** users, packet_items, billing_runs in separate try/catch - failures don't block boot.
-
-**Falsy trap:** Use != null for numeric defaults where 0 is valid. e.g. row.gabrielle_pct != null ? row.gabrielle_pct : 100
+**Falsy trap:** Use `!= null` for numeric defaults where 0 is valid. e.g. `row.gabrielle_pct != null ? row.gabrielle_pct : 100`
 
 **Nationwide Jewellers (NJ) — Combined Billing:**
-- combined_billing=true: Gabby invoices the retailer for FULL job cost + GST. Paula invoices Gabby for her % share.
-- Gabby's Run Billing selection includes ALL NJ items (even where gabrielle_pct=0). Paula sees only paula_pct > 0 items.
+- `combined_billing=true`: Gabby invoices the retailer for FULL job cost + GST. Paula invoices Gabby for her % share.
+- Gabby's billing selection includes ALL NJ items (even where `gabrielle_pct=0`). Paula sees only `paula_pct > 0` items.
 - Step 2 modal: Gabby → "[Retailer] — All", Paula → "[Retailer] — Invoice Gabby" (subtitle: "Invoice to: Gabby Lovering")
-- PDF header: Gabby → retailer name only. Paula → "Invoice to: Gabby Lovering"
-- Has sub-customers (currently NJ1, NJ2) stored in S.subCustomers array in state
-- sub_customer required on packets when retailer = NJ, free-text customer ref (no padded prefix)
-- Invoice summary groups NJ items by sub-customer with subtotals → gross subtotal → discount → net subtotal → GST → total
-- isRetailerCombined(retailerId) checks combined_billing flag. Future combined-billing retailers: set flag in DB only.
+- Invoice summary groups by sub-customer: one "Valuations - [sub-customer] - [date]" line + one "Shipping - [sub-customer] - [date] (N)" line per sub-customer. Then gross subtotal → discount → shipping total (ex-GST) → GST → Total.
+- `isRetailerCombined(retailerId)` checks `combined_billing` flag.
 
-**Invoice Groupings:**
-Job types mapped to three billing categories (INVOICE_GROUPS constant + invoiceGroup(jtName)):
-- Valuations — default (all types not listed below)
+**Shipping workflow:**
+- Packets for NJ and Direct are shipped in batches. Each batch creates a `shipping_run` record and sets `shipping_run_id` on each packet.
+- NJ shipments generate a tax invoice (`INV-XXXX`) printed at ship time. Invoice number stored in `shipping_runs.invoice_number`.
+- `getShippingForBilling(retailerId)` — matches runs by retailer + billing filter date range (NOT by selected packet IDs, since Direct packets may not appear in a user's billing selection even when shipped).
+- `nextInvoiceNumber()` — scans `S.shippingRuns`, finds max `INV-XXXX`, returns next padded string.
+
+**Tax invoices (NJ sub-customers):**
+- Title: "TAX INVOICE". To: sub-customer name + address (from `sub_customers` table). From: PGL Appraisals, 34 Tarbert Street, Alexandra 9320.
+- Line items: per-packet row (ref — surname — item count). Shipping shown ex-GST (stored amount ÷ 1.15). GST 15% on full subtotal. Amount due NZD.
+- No due date (billed via Nationwide).
+
+**Invoice Groupings (billing PDFs):**
+Job types mapped to three billing categories (`INVOICE_GROUPS` constant):
+- Valuations — default
 - Stock — "Stock Update", "Stock - New"
 - Pearl Threading — "Pearl Threading"
-NJ sub-customer breakdown uses raw job type names (not grouped).
+
+**PDF detailed reports — NJ:**
+Groups items by shipping run. Each run header: `Invoice: INV-XXXX YYYY-MM-DD (tracking ...XXXX)`. Falls back to `Shipment:` for older runs without an invoice number. Summary: Valuations Subtotal → Shipping Subtotal (ex-GST) → GST → TOTAL.
 
 ---
 
 ## Nav Structure
-Centre: Dashboard - Records - Run Billing ($icon) - Reports
-Right: [User toggle] [+ New Packet] (gold button) [Connected dot]
-Reports nav stays active for: reports, billingRunsReport, customerReport views.
+Centre: Dashboard · Records · Run Billing ($icon) · Reports · Shipping
+Right: [User toggle] [+ New Packet] [Connected dot]
+Reports nav active for: reports, billingRunsReport, customerReport.
+Shipping nav active for: shipping, shippingReport, fulfilmentReport.
 
 ## Views / Screens
 
 ### Dashboard
-- 3 dollar cards (user share, POST-TAX POST-DISCOUNT): Unbilled / Earned This Week / Earned This Month
-  - Unbilled: excludes Hold and Archived, not yet billed by this user
-  - Week/Month: includes billed + unbilled, excludes Hold and Archived
+- 3 dollar cards (POST-TAX POST-DISCOUNT): Unbilled / Earned This Week / Earned This Month
 - 4 status count cards: New / On Hold / Part Billed / Fully Billed
-- Unbilled Packets for [user] - all unbilled packets for selected user, whole row clickable to edit
-  - Filters: excludes Billed status and Hold/Archived. Shows only packets where user hasn't billed yet
-  - Table uses fixed layout. Columns: Date(108px), Ref(110px), Surname(90px truncated), Retailer(130px plain text), Status(136px nowrap), Edit(44px)
-  - Retailer shown as plain text (no pill/badge)
+- Unbilled Packets table for current user
 - Quick Actions: Search Records + Run Billing
-- By Retailer bar chart (this month only, excludes Archived)
+- By Retailer bar chart (this month, excludes Archived)
 
 ### Records
 - Filters: Status pills, Retailer, User, Date range, Search, Reset
 - Cost column (Total/Paula/Gabby per User filter)
-- Whole row clickable to edit. Checkbox stops propagation.
-- Batch status update + CSV export
+- Shipped column: tick icon if `shipping_run_id` is set
+- Whole row clickable to edit. Batch status update + CSV export.
 
 ### New / Edit Work Packet
 - Sticky header: title + status badge (edit) + Cancel + split Save button
-- Edit mode - Billing Status card (above Packet Details):
-  - Workflow lozenges: New / Hold / Archived (immediate save)
-  - Hold disabled if either user billed. New resets both billed flags.
-  - Billing toggles: Paula / Gabby (immediate save, disabled on Hold/Archived)
-  - Fully Billed warning when both billed
-  - Delete packet button (confirmation, deletes items then packet)
+- Edit mode — Billing Status card: workflow lozenges (New/Hold/Archived), billing toggles (Paula/Gabby), delete button
 - Packet Details: Date, Retailer + Ref, Surname
-  - Customer reference: accepts up to 7 digits for standard retailers (Alexandra/Queenstown, format: "001-1234567")
-  - When retailer = NJ: ref field switches to free-text input (no padded prefix, no length limit)
-  - When retailer = NJ: required Sub-customer dropdown appears (NJ1/NJ2)
-  - Sub-customer is required for NJ - validation blocks save if empty
-- Items (up to 3): Item + Job Type (both by display_order), Cost, Split slider (right = Gabby increases)
-  - Trash icon in edit mode deletes from packet_items immediately
-- gabrielle_pct=0 loads correctly (not falsy-defaulted to 100)
+  - NJ: free-text ref, required sub-customer dropdown
+  - If shipped: "Shipped: See shipping details" link → inline expandable panel showing packing slip details
+- Items (up to 3): Item + Job Type, Cost, Split slider
 
 ### Run Billing (4 steps)
-1. Selection: date filter (default: last month), status filter. Date pills: All / Last Week / This Month / Last Month / Custom. Auto-selects eligible items via b.initialised flag (reset on nav click and user toggle). Combined-billing retailers: Gabby sees all items; Paula sees only her items.
-2. Retailer modal loop: invoice summary first (copy/paste into billing system), then items table below. GST conditional. Back/Next/Generate PDFs.
-   - Modal title: standard → "[Retailer] — Invoice Summary". Combined Gabby → "[Retailer] — All". Combined Paula → "[Retailer] — Invoice Gabby".
-   - NJ invoice summary groups by sub-customer with subtotals + discount line
-3. PDFs: jsPDF A4, Courier monospace. Title: "PGJ Appraisals, Detailed Report". Separator widths: 90 chars (standard), 100 chars (NJ). Confirm + Mark as Billed.
-4. Confirm: sets per-user billed flags, auto-sets Billed when both done. Saves billing run.
+1. Selection: date filter (default last month), status filter. Auto-selects eligible items via `b.initialised` flag.
+2. Retailer modal loop: invoice summary (copy/paste) + items table. GST conditional. NJ groups by sub-customer.
+3. PDFs: jsPDF A4, Courier monospace. NJ groups by shipping run/invoice.
+4. Confirm: sets per-user billed flags, saves billing run.
 
-### Reports (landing page)
-Two cards: Billing Runs and Customer Report. Click to navigate with breadcrumb.
+### Reports
+Landing page → Billing Runs, Customer Report.
 
-### Billing Runs (Reports > Billing Runs)
+### Billing Runs
 Billing run history. Regenerate PDFs. Delete run.
 
-### Customer Report (Reports > Customer Report)
-Filter: date range (defaults this month) + retailer. Groups by retailer, lists items per customer sorted by ref. Totals per retailer. Download PDF (jsPDF A4).
+### Customer Report
+Filter: date range + retailer. Groups by retailer, lists items per customer. Download PDF.
 
----
+### Shipping
+- Filter: retailer/sub-customer. Lists unshipped packets with checkboxes.
+- "Create Shipment" CTA → two-step modal: (1) packet table + shipping cost → Print Invoice (NJ) or Print Packing Slip, (2) ship date + tracking → Mark as Shipped.
 
-## Design System (June 2026 Refresh)
+### Shipping Audit
+Expandable per-run rows. Columns: Date, Retailer/Sub-customer, Invoice, Tracking, Packets, Cost. Shows `INV-XXXX` for NJ runs.
 
-### Colours (CSS custom properties)
-- **Primary**: Gold `#CEA12B` (CTAs, var(--gold-light) `#FBF4DC`, var(--gold-dark) `#996128`)
-- **User buttons**: Teal `#269C9C` (Gabby active), Pink-700 `#B0215F` (Paula active), Mid-grey `#B9B8B8` (inactive)
-- **Text**: Deep `#2C1A17` (headings), Chocolate `#4F2E1D` (labels), Dark-grey `#828282` (body), Text-sec `#3A3229` (secondary)
-- **Neutral**: White `#FFFFFF` (canvas), Light-grey `#F8F7F7` (containers)
-- **Status colours**: Violet-700 (New), Gold-dark (Hold), Brand-neutral-600 (Archived), Pink-* (Paula), Teal-* (Gabby)
-- **Tokens**: All spacing, corner-radius, and typography use CSS custom properties (var(--space-*), var(--rounded-*), classes .h1–.h4, .para, .para-sm, etc.)
-
-### Containers & Layout
-- **Layout**: Side nav + top bar + main content, all floating 20px-radius cards on 8px-padded white canvas
-- **Sidenav**: 220px fixed, sticky, height `calc(100vh - 16px)`, no border
-- **Topbar**: 90px height, 4-column grid (gap 16px), no border, 28px horizontal padding
-  - Col 1–2: Search input (50px height, 20px search icon, no border, white bg, 20px radius)
-  - Col 3: NEW PACKET button (50px pill)
-  - Col 4: User toggle (buttons + name/email, right-aligned)
-- **Main**: Flexible, no border, 24px/28px padding
-
-### Components
-- **Stat cards**: 261×180px, no border, 20px radius, 28px top/bottom padding, 20px left padding
-  - Standard: white background
-  - Primary: radial gradient `150.87% 78.11% at 16.67% 62.08%, #995728 0%, #4F2E1D 25.12%, #2C1A17 100%`, all text white
-  - Label: Montserrat 15px 800, chocolate (dark-grey on primary)
-  - Value: Montserrat 36px 800, black (white on primary)
-  - Subtitle: Jost 14px 200, black (white on primary), 6px margin-top
-- **Buttons** (see styles.css for current specs)
-  - Primary/Gold: min-height 40px, padding 10px var(--space-lg), 16px DM Sans Medium, var(--rounded-full) radius
-  - Secondary: same height/padding, white bg, var(--gold-dark) border/text
-  - Destructive: same dims, red background `#DC263B`
-  - Small: var(--space-xs) + var(--space-md) padding, 12px DM Sans Medium
-- **User toggle buttons**: 50×50px circles, Montserrat 36px 800, white text, 4px gap
-- **Top bar user info**: Right-aligned, name 16px DM Sans 200, email 12px DM Sans 200, 16px gap from buttons, vertically centered
-
-### Fonts
-Montserrat (display/headings), DM Sans (body/UI), DM Mono (code)
-
-### Icons
-I object with SVG strings. Key: home, list, dollar, save, plus, download, edit, trash, search, back, refresh, check, alert, inbox, calendar, arrow, close, empty.
+### Fulfilment Summary
+Flat list of all shipping runs with packet counts and costs.
 
 ---
 
 ## Code Conventions
 
-**State (S):** packets, allPacketItems, billingStatuses, users, retailers, jobTypes, items, editItems, recFilters, selectedPacketIds, billing (incl. initialised), billingRuns, customerReport, user (slug), view, subCustomers (array of NJ sub-customer names)
+**State (S):** See CLAUDE.md for full field list.
 
-**Render:** render() = full DOM rebuild. renderAsync() = pre-fetches edit data first. Never call from inside a form.
+**Render:** `render()` = full DOM rebuild. `renderAsync()` = pre-fetches edit data first. Never call from inside a form.
 
-**Toast:** toast() calls render() - never inside forms. Use showToast() (direct DOM inject, safe anywhere).
-
-**Supabase:** sbAll, sbInsert, sbUpdate, sbDelete, sbUpsert, fetchPacketItems(id)
+**Toast:** `toast()` calls `render()` — never inside forms. Use `showToast()` (direct DOM inject, safe anywhere).
 
 **Key helpers:**
-- getCurrentUser() - full user row, call once per function (not cu2/cu3/cu4)
-- getDollarStats() - {unbilled, earnedWeek, earnedMonth} - POST-TAX, POST-DISCOUNT
-- packetCosts(id) - applies retailer discount_pct, returns {total, paula, gabby}
-- packetBillingLabel(pkt), userHasBilled(pkt), userHasNoWork(pktId)
-- getBillingItems(), isRetailerCombined(retailerId), invoiceGroup(jtName)
-- buildInvoiceSummary(items, retailerId) - returns {byJobType, bySubCustomer, subtotal, gst, total, discountPct, isNJRetailer, isCombined, isCombinedGabby, isCombinedPaula}
-- renderBreadcrumb(section), renderBillingRunsReport(), renderCustomerReportPage()
-- downloadCustomerReportPDF(packets, filters)
-- fmtD(d), dateToISO(s), parseStoredDate(s), getDateRange(key), pad3(n), fmtMoney(n)
-- statusName(id), statusId(name), statusBadgeStyle(name), statusShowDash(id)
+- `getCurrentUser()` — full user row, call once per function
+- `getDollarStats()` — `{unbilled, earnedWeek, earnedMonth}` POST-TAX, POST-DISCOUNT
+- `packetCosts(id)` — applies retailer `discount_pct`, returns `{total, paula, gabby}`
+- `packetBillingLabel(pkt)`, `userHasBilled(pkt)`, `userHasNoWork(pktId)`
+- `getBillingItems()`, `isRetailerCombined(retailerId)`, `invoiceGroup(jtName)`
+- `buildInvoiceSummary(items, retailerId)` — returns `{byJobType, bySubCustomer, subtotal, gst, total, discountPct, isNJRetailer, isCombined, isCombinedGabby, isCombinedPaula}`
+- `getShippingForBilling(retailerId)` — returns `{total, totalExGST, bySubCustomer, bySubCustomerExGST, bySubCustomerRunCount, runs, runCount, dateLabel}`
+- `nextInvoiceNumber()` — returns next `INV-XXXX` string
+- `generatePDFContent(retailerId)` — text lines for detailed billing PDF
+- `renderBreadcrumb(section)`, `retailerName(id)`, `statusName(id)`, `fmtMoney(n)`, `fmtD(d)`, `getDateRange(key)`
 
-**IDs:** Date.now().toString(36) + random
-
-**Refactor debt:** inline user ternaries should use getCurrentUser() — one call per function, not cu2/cu3/cu4 copies.
+**IDs:** `Date.now().toString(36) + Math.random().toString(36).slice(2,7)` via `gid()`
 
 ---
 
 ## Workflow
 1. Build/test in dev file against dev Supabase
-2. Claude delivers AppraisalTracker-dev.html (dev credentials) for testing
-3. Once tested and happy, Claude delivers index.html (prod credentials) for commit
-4. Claude Code: "Replace index.html with downloaded file and push to GitHub"
-5. GitHub Pages deploys ~2 min. One branch (main) only.
-6. DB changes: dev SQL first, verify, then prod
+2. Once tested, copy to index.html swapping only SB_URL, SB_KEY, title — push to `dev` branch on GitHub
+3. Merge `dev` → `main` for production release
+4. GitHub Pages deploys ~2 min from `main`
+5. DB changes: dev SQL first, verify, then prod
 
 ---
 
 ## Planned Features
 - Proper auth (Supabase email/password)
 - CSV matching Solo accounting import
-- NJ sub-customer names to be confirmed and updated in S.subCustomers (currently placeholder 'NJ1', 'NJ2')
-- retailer_job_type_costs table ready for future per-retailer pricing if needed
-
----
-
-## Bug Prevention
-See CLAUDE.md for the full rules list and pre-delivery checklist.
+- Records page: shipped/unshipped filter (deferred — spacing constraints)
+- Sub-customer address entry UI (currently populated directly in Supabase)
