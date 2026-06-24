@@ -349,6 +349,17 @@
   --color-popover:            var(--color-white);
   --color-popover-foreground: var(--color-zinc-950);
 
+  /* -- Sidebar tokens --------------------------------------- */
+
+  --color-sidebar-background:  var(--color-stone-50);
+  --color-sidebar-primary:     var(--color-primary);
+  --color-sidebar-foreground:  var(--color-stone-950);
+  --color-sidebar-ghost:       var(--color-stone-700);
+  --color-sidebar-ghost-hover: rgba(0, 0, 0, 0.05);
+  --color-brand-shade-800:    var(--color-gold-800);
+
+  /* -- Button brand tokens ---------------------------------- */
+
   --color-btn-brand-border:       var(--color-gold-800);
   --color-btn-brand-hover-bg:     var(--color-gold-800);
   --color-btn-brand-hover-border: var(--color-stone-300);
