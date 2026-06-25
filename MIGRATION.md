@@ -34,7 +34,7 @@ Tracks which pages have been fully audited for: correct page-header structure, f
 | `:root` token definitions | 1–23 | ⏳ Replace | Replaced in JS/HTML (global token sweep done). CSS `:root` block stays until styles.css is retired. |
 | Typography scale (`.h1`–`.h4`) | 27–52 | ✅ Done | `.h1`–`.h4` added to `style-new.css` using tokens. `.para-*`/`.mono` not yet replaced. No uppercase on `.h4` globally — applied locally via inline style. |
 | App shell (`.app-shell`) | 54–55 | ⬜ Not started | |
-| Side nav | 57–74 | ⬜ Not started | |
+| Side nav | 57–74 | ✅ Done | Full token-based rewrite: brand, section headings, nav links (default/active/hover/disabled), status card. New tokens: `--color-sidebar-*` (5). New class: `.sidebar-section-heading`. SVG nav icons inlined in `I` object (`nav_*_f`/`nav_*_u`), `fill="currentColor"` for CSS colour control. `@media (max-width: 768px)` breakpoint hardcoded (no breakpoint token system). |
 | App body + topbar | 76–84 | ⬜ Not started | |
 | User toggle | 86–95 | ⬜ Not started | |
 | Main area | 97–99 | ⬜ Not started | |

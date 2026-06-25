@@ -67,9 +67,13 @@ NJ sub-customers. Loaded into `S.subCustomers`. Address fields used in tax invoi
 `id TEXT PK, packet_id FK, item TEXT, job_type_id FK, cost DECIMAL, paula_pct INTEGER, gabrielle_pct INTEGER (sum to 100)`
 
 ### shipping_runs
-`id TEXT PK, ship_date TEXT, shipping_cost DECIMAL (GST-INCLUSIVE), tracking_last4 TEXT, retailer_id FK, sub_customer_name TEXT (nullable), invoice_number TEXT (nullable, format INV-XXXX), created TEXT`
+`id TEXT PK, ship_date TEXT, shipping_cost DECIMAL (GST-INCLUSIVE), tracking_last4 TEXT, retailer_id FK, sub_customer_name TEXT (nullable), invoice_number TEXT (nullable, format INV-XXXX, NJ only, denormalized from tax_invoices), packing_slip_number TEXT (nullable, format PS-XXXX, Direct only), created TEXT`
 
 **CRITICAL — shipping_cost is stored GST-inclusive.** Always divide by 1.15 to get ex-GST amount for billing display. `getShippingForBilling()` pre-computes `totalExGST` and `bySubCustomerExGST`.
+
+### tax_invoices
+`id TEXT PK, invoice_number TEXT UNIQUE (INV-XXXX format), shipping_run_id FK, issue_date TEXT, retailer_id FK, sub_customer_name TEXT (nullable), status TEXT ('active'|'void'), created TEXT`
+NJ tax invoices as first-class entities. One record per NJ shipping run. `invoice_number` is also denormalized onto `shipping_runs` for fast display in the audit. Packets on an invoice are inferred via `packets.shipping_run_id`. Loaded into `S.taxInvoices`. `nextInvoiceNumber()` scans `S.taxInvoices` to find the max INV number.
 
 ### billing_runs
 `id TEXT PK, run_date TEXT, user_name TEXT (slug), retailer_ids TEXT (csv), packet_ids TEXT (csv), status TEXT, created TEXT`
@@ -100,11 +104,14 @@ NJ sub-customers. Loaded into `S.subCustomers`. Address fields used in tax invoi
 - Invoice summary groups by sub-customer: one "Valuations - [sub-customer] - [date]" line + one "Shipping - [sub-customer] - [date] (N)" line per sub-customer. Then gross subtotal → discount → shipping total (ex-GST) → GST → Total.
 - `isRetailerCombined(retailerId)` checks `combined_billing` flag.
 
+**Business rule — one invoice/slip per packet:**
+A packet can never appear on more than one invoice or packing slip. The database enforces this structurally (`packets.shipping_run_id` is a single FK), and the shipping view enforces it in the UI by only showing packets where `shipping_run_id IS NULL`. If a packet needs to move to a different run (e.g. error correction), it must first be removed from the existing run (voiding or editing the invoice/slip) before it can be re-shipped. The UI for this is a future todo — see "Invoice edit / void screen" in Planned Features.
+
 **Shipping workflow:**
 - Packets for NJ and Direct are shipped in batches. Each batch creates a `shipping_run` record and sets `shipping_run_id` on each packet.
 - NJ shipments generate a tax invoice (`INV-XXXX`) printed at ship time. Invoice number stored in `shipping_runs.invoice_number`.
 - `getShippingForBilling(retailerId)` — matches runs by retailer + billing filter date range (NOT by selected packet IDs, since Direct packets may not appear in a user's billing selection even when shipped).
-- `nextInvoiceNumber()` — scans `S.shippingRuns`, finds max `INV-XXXX`, returns next padded string.
+- `nextInvoiceNumber()` — scans `S.taxInvoices`, finds max `INV-XXXX`, returns next padded string.
 
 **Tax invoices (NJ sub-customers):**
 - Title: "TAX INVOICE". To: sub-customer name + address (from `sub_customers` table). From: PGL Appraisals, 34 Tarbert Street, Alexandra 9320.
@@ -133,9 +140,9 @@ Shipping nav active for: shipping, shippingReport, fulfilmentReport.
 ### Dashboard
 - 3 dollar cards (POST-TAX POST-DISCOUNT): Unbilled / Earned This Week / Earned This Month
 - 4 status count cards: New / On Hold / Part Billed / Fully Billed
-- Unbilled Packets table for current user
-- Quick Actions: Search Records + Run Billing
-- By Retailer bar chart (this month, excludes Archived)
+- Unbilled Packets table (full width, current user only): Date, Ref, Surname, Sub-customer, Retailer, Status, Items, Cost
+  - Excludes packets where the current user has 0% on all items (N/A)
+  - Excludes effectively-billed packets (100% user billed = fully billed)
 
 ### Records
 - Filters: Status pills, Retailer, User, Date range, Search, Reset
@@ -211,8 +218,40 @@ Flat list of all shipping runs with packet counts and costs.
 
 ---
 
+## Admin Section (planned)
+
+A restricted-access admin area for complex operations not safe to expose in the main UI.
+
+**Shipping Runs Admin:**
+- View all shipping runs with full detail
+- Add or remove individual packets from a run (sets/clears `packets.shipping_run_id`)
+- Delete a shipping run — clears `shipping_run_id` on all linked packets, removes the run record, and removes any linked `tax_invoices` entry
+- Business rule: a packet can never appear on more than one run; UI must enforce this when adding to a run
+
+**Tax Invoice Admin:**
+- Void a tax invoice (`tax_invoices.status = 'void'`) — does not delete shipping run
+- Reissue: create a new `tax_invoices` record with a new INV number linked to the same or corrected shipping run
+- Does not duplicate shipping run functionality — shipping run edits done via Shipping Runs Admin
+- Future: restrict to admin user only (Gabby) once auth is implemented
+
 ## Planned Features
 - Proper auth (Supabase email/password)
 - CSV matching Solo accounting import
 - Records page: shipped/unshipped filter (deferred — spacing constraints)
 - Sub-customer address entry UI (currently populated directly in Supabase)
+- **Invoice edit / void screen** — View a specific invoice's packets, remove items (sets `packets.shipping_run_id = null`), void (`tax_invoices.status = 'void'`), and reissue with a new INV number. Data model already supports this. Required to enforce the one-invoice-per-packet rule when correcting errors.
+- **Invoice search** — Search by INV number, sub-customer, date, amount.
+- **NJ billing reconciliation** — View all INV-XXXX numbers in a billing period + totals; print all for sending to Nationwide alongside the accounting system invoice. Defer until Nationwide billing flow confirmed.
+- **Alexandra / Queenstown billing review** — Manual test pass: verify Step 2 modal and PDF generation are correct under the unified billing model (no shipping, unaffected by tax_invoices change).
+
+## Future Reports — Split Reconciliation
+
+Since June 2026, Gabby invoices all retailers for the full cost, and Paula invoices Gabby for her split percentage. This means the retailer-facing invoices no longer reflect individual splits. Two reports are needed to support reconciliation:
+
+**1. Paula's Split Report**
+For a given billing run or date range, show Paula's share of each packet item — `paula_pct` applied to the discounted cost. This is what Paula invoices Gabby. Should match the amounts on Paula's generated PDFs.
+
+**2. Split Reconciliation Report**
+Side-by-side comparison of: (a) what Gabby billed the retailer (full cost after discount), (b) Paula's share (from `paula_pct`), (c) Gabby's effective share (total minus Paula's). Allows both to verify the internal split against the retailer-facing invoice.
+
+These reports should use the same date range / retailer filters as the existing Billing Runs and Customer Report pages.
