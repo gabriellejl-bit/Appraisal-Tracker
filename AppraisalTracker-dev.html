@@ -9,8 +9,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800;900&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="design-system/tokens/tokens-html.css?v=11">
 <link rel="stylesheet" href="design-system/components/html/components.css?v=9">
-<link rel="stylesheet" href="styles.css?v=9">
-<link rel="stylesheet" href="style-new.css?v=32">
+<link rel="stylesheet" href="styles.css?v=10">
+<link rel="stylesheet" href="style-new.css?v=34">
 </head>
 <body>
 <div id="app"><div class="loading-screen"><div class="spinner"></div><div class="loading-text">Connecting...</div></div></div>
@@ -47,7 +47,7 @@ const sbUpsert=(t,r)=>{const h2=hdrs();h2['Prefer']='resolution=merge-duplicates
 //
 let S={
   packets:[],allPacketItems:[],items:[],retailers:[],jobTypes:[],billingStatuses:[],
-  recFilters:{search:'',statuses:[],showArchived:false,retailerId:null,user:'all',dateRange:'all',dateFrom:'',dateTo:''},
+  recFilters:{search:'',statuses:[],showArchived:false,retailerId:null,user:'all',dateRange:'all',dateFrom:'',dateTo:'',sort:'date_desc'},
   selectedPacketIds:new Set(),
   // Run Billing state
   customerReport:{
@@ -58,7 +58,7 @@ let S={
   },
   billing:{
     step:0,           // 0=off, 1=selection, 2=retailer loop, 3=generate, 4=confirm
-    filters:{statuses:[],dateRange:'lastmonth',dateFrom:'',dateTo:''},
+    filters:{retailerKey:'',dateRange:'lastmonth',dateFrom:'',dateTo:'',sort:'date_desc'},
     selectedItemIds:new Set(), // packet_item ids checked in step 1
     retailers:[],     // retailer ids with records in selection (ordered)
     retailerIdx:0,    // current retailer in loop
@@ -66,11 +66,12 @@ let S={
     runId:null,
   },
   billingRuns:[],users:[],     // loaded from Supabase
-  view:'home',editId:null,search:'',subCustomers:[],shippingRuns:[],
+  view:'home',editId:null,search:'',subCustomers:[],shippingRuns:[],taxInvoices:[],
   shippingFilters:{retailerId:null,subCustomer:''},
   shippingSelected:new Set(),
   shippingReport:{dateRange:'lastmonth',dateFrom:'',dateTo:''},
   fulfilmentReport:{dateRange:'lastmonth',dateFrom:'',dateTo:''},
+  taxInvoicesReport:{dateRange:'thisfy',dateFrom:'',dateTo:''},
   toast:null,tt:null,ready:false,online:true,user:'gabby',
   currentUser:null,  // full user row from users table
   searchCursorPos:0,  // track cursor position in search input for focus restoration
@@ -100,17 +101,27 @@ function statusShowReport(id){const s=S.billingStatuses.find(x=>x.id===id);retur
 // Badge colour per status name
 // Computed per-packet billing display status based on per-user billed flags
 // Returns a display label and style independent of status_id
+// Returns {paulaDone, gabbyDone} — true when a user is billed or has 0% on all items
+function billedStatus(pkt,items){
+  const it=items||S.allPacketItems.filter(i=>i.packet_id===pkt.id);
+  const paulaDone=(pkt.paula_billed||false)||(it.length>0&&it.every(i=>(i.paula_pct||0)===0));
+  const gabbyDone=(pkt.gabby_billed||false)||(it.length>0&&it.every(i=>(i.gabrielle_pct||0)===0));
+  return {paulaDone,gabbyDone};
+}
+function isEffectivelyBilled(pkt,items){const{paulaDone,gabbyDone}=billedStatus(pkt,items);return paulaDone&&gabbyDone;}
 function packetBillingLabel(pkt){
   const pb=pkt.paula_billed||false;
   const gb=pkt.gabby_billed||false;
-  if(pb&&gb)return 'Fully Billed';
-  // Check if the other user has 0% on all items - if so, treat as Fully Billed
   const items=S.allPacketItems.filter(i=>i.packet_id===pkt.id);
-  if(pb&&items.length&&items.every(i=>(i.gabrielle_pct||0)===0))return 'Fully Billed';
-  if(gb&&items.length&&items.every(i=>(i.paula_pct||0)===0))return 'Fully Billed';
+  if(isEffectivelyBilled(pkt,items))return 'Fully Billed';
+  // For 100% packets, the unbilled active user takes priority over showing "Billed (other)"
+  if(items.length){
+    if(items.every(i=>(i.gabrielle_pct||0)===0)&&!pb)return null;
+    if(items.every(i=>(i.paula_pct||0)===0)&&!gb)return null;
+  }
   if(pb)return 'Billed (Paula)';
   if(gb)return 'Billed (Gabby)';
-  return null; // fall through to status_id label
+  return null;
 }
 
 // Returns true if the current user has billed this packet
@@ -170,7 +181,7 @@ function getDateRange(key){
     default:return null;
   }
 }
-function fmtMoney(n){return'$'+(n||0).toFixed(2);}
+function fmtMoney(n){const v=n||0;return'$'+v.toLocaleString('en-NZ',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function retailerCode(id){const r=S.retailers.find(x=>x.id===id);return r?pad3(r.code):'';}
 function retailerName(id){const r=S.retailers.find(x=>x.id===id);return r?r.name:'';}
 function jobTypeName(id){const j=S.jobTypes.find(x=>x.id===id);return j?j.name:'';}
@@ -237,6 +248,8 @@ async function loadAll(){
   catch(e){console.warn('sub_customers load failed:',e);S.subCustomers=[];}
   try{S.shippingRuns=await sbAll('shipping_runs','&order=created.desc')||[];}
   catch(e){console.warn('shipping_runs load failed:',e);S.shippingRuns=[];}
+  try{S.taxInvoices=await sbAll('tax_invoices','&order=created.desc')||[];}
+  catch(e){console.warn('tax_invoices load failed:',e);S.taxInvoices=[];}
 }
 
 // Helper to get the full user object for the current user slug
@@ -461,7 +474,7 @@ function renderNav(){
     toggleBtns.append(btn);
   });
   const toggle=h('div',{className:'user-toggle'},toggleBtns,userInfo);
-  const isReportsView=['reports','customerReport','billingRunsReport','shippingReport','fulfilmentReport'].includes(S.view);
+  const isReportsView=['reports','customerReport','billingRunsReport','shippingReport','fulfilmentReport','taxInvoices'].includes(S.view);
   const newBtn=h('button',{className:'btn btn-primary has-icon',style:{justifySelf:'start'},onClick:()=>{S.view='form';render();}},h('span',{htmlContent:'<svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4.36134 12V0H7.61344V12H4.36134ZM0 7.58442V4.41559H12V7.58442H0Z" fill="white"/></svg>',style:{display:'inline-flex',alignItems:'center'}}),'NEW PACKET');
   const isOnline=S.online;
 
@@ -495,9 +508,10 @@ function renderNav(){
   sidenav.append(menuSection);
 
   const generalSection=h('div',{className:'sidenav-section'},h('div',{className:'sidebar-section-heading'},'General'));
-  [{label:'Settings',icon:'nav_settings'},{label:'Logout',icon:'nav_logout'}].forEach(({label,icon})=>{
-    generalSection.append(h('button',{className:'nav-link disabled'},ic(icon+'_u'),label));
-  });
+  const adminLink=h('button',{className:'nav-link'+(S.view==='admin'?' active':'')},ic('nav_settings_u'),'Admin');
+  adminLink.addEventListener('click',()=>{S.view='admin';render();});
+  generalSection.append(adminLink);
+  generalSection.append(h('button',{className:'nav-link disabled'},ic('nav_logout_u'),'Logout'));
   sidenav.append(generalSection);
 
   const statusCard=h('div',{className:'sidenav-bottom'},
@@ -557,89 +571,57 @@ function renderHome(){
     h('div',{className:'stat-card',style:{padding:'14px 18px'}},h('div',{className:'stat-label',style:{marginBottom:'6px'}},'Fully Billed'),h('div',{className:'stat-value',style:{fontSize:'24px'}},String(stats.byStatus['Fully Billed']||0))),
   ));
 
-  const grid=h('div',{className:'content-grid fade-up d5'});
+  const grid=h('div',{className:'fade-up d5'});
 
   // unbilled packets for current user
   const panel=h('div',{className:'panel'});
   const isGabby=cu.slug==='gabby';
   const unbilledPkts=S.packets.filter(p=>{
     if(!statusShowDash(p.status_id))return false;
-    if(p.status_id===3)return false; // Exclude "Billed" status
+    if(p.status_id===3)return false;
+    // Exclude packets where this user has 0% on all items (nothing for them to bill)
+    const items=S.allPacketItems.filter(i=>i.packet_id===p.id);
+    if(items.length&&items.every(i=>(isGabby?(i.gabrielle_pct||0):(i.paula_pct||0))===0))return false;
+    // Exclude effectively-billed packets (100% user billed, 0% user has nothing to bill)
+    if(isEffectivelyBilled(p,items))return false;
     return isGabby?(p.gabby_billed!==true):(p.paula_billed!==true);
-  });
+  }).sort((a,b)=>new Date(b.date)-new Date(a.date));
   panel.append(h('div',{className:'panel-header'},h('span',{className:'panel-title'},'Unbilled Packets for '+cu.name)));
   if(unbilledPkts.length){
-    const tbl=h('table',{className:'table',style:{tableLayout:'fixed',width:'100%'}});
+    const tbl=h('table',{className:'table',style:{tableLayout:'auto',width:'100%'}});
     tbl.append(h('thead',{},h('tr',{className:'table-header'},
-      h('th',{style:{width:'108px'}},'Date'),
-      h('th',{style:{width:'110px'}},'Ref'),
-      h('th',{style:{width:'90px'}},'Surname'),
-      h('th',{style:{width:'130px'}},'Retailer'),
-      h('th',{style:{width:'136px'}},'Status'),
+      h('th',{style:{whiteSpace:'nowrap'}},'Date'),
+      h('th',{style:{whiteSpace:'nowrap'}},'Ref'),
+      h('th',{style:{width:'99%'}},'Surname'),
+      h('th',{style:{whiteSpace:'nowrap'}},'Sub-customer'),
+      h('th',{style:{whiteSpace:'nowrap'}},'Retailer'),
+      h('th',{style:{whiteSpace:'nowrap'}},'Status'),
+      h('th',{style:{whiteSpace:'nowrap',textAlign:'right'}},'Items'),
+      h('th',{style:{whiteSpace:'nowrap',textAlign:'right'}},'Cost'),
       h('th',{style:{width:'44px'}}),
     )));
     const tb=h('tbody',{});
     for(const r of unbilledPkts){
       const eb=h('button',{className:'edit-btn',title:'Edit',onClick:e=>{e.stopPropagation();S.editId=r.id;S.view='edit';renderAsync();}});eb.innerHTML=I.edit;
       const retName=retailerName(r.retailer_id);
+      const pkItems=S.allPacketItems.filter(i=>i.packet_id===r.id);
+      const pkCost=pkItems.reduce((s,i)=>s+(parseFloat(i.cost)||0),0);
       tb.append(h('tr',{style:{cursor:'pointer'},onClick:()=>{S.editId=r.id;S.view='edit';renderAsync();}},
-        h('td',{className:'mono'},r.date),
-        h('td',{className:'mono',style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},r.customer_ref),
-        h('td',{className:'name-cell',style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'90px'}},r.surname),
-        h('td',{style:{fontSize:'13px',color:'var(--color-muted-foreground)'}},retName),
+        h('td',{className:'mono',style:{whiteSpace:'nowrap'}},r.date),
+        h('td',{className:'mono',style:{whiteSpace:'nowrap'}},r.customer_ref),
+        h('td',{style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'0'}},r.surname),
+        h('td',{style:{whiteSpace:'nowrap',fontSize:'13px',color:'var(--color-muted-foreground)'}},r.sub_customer||''),
+        h('td',{style:{whiteSpace:'nowrap',fontSize:'13px',color:'var(--color-muted-foreground)'}},retName),
         (()=>{const bl=packetBillingLabel(r);const sn=bl||statusName(r.status_id);return h('td',{style:{whiteSpace:'nowrap'}},h('span',{className:'badge',style:statusBadgeStyle(sn)},sn));})(),
+        h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)',fontSize:'var(--text-sm)'}},String(pkItems.length)),
+        h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)',fontSize:'var(--text-sm)',whiteSpace:'nowrap'}},fmtMoney(pkCost)),
         h('td',{style:{paddingLeft:'12px'}},eb),
       ));
     }
     tbl.append(tb);panel.append(tbl);
-  }else{panel.append(h('div',{className:'empty-panel'},'No packets yet -- click New Work Packet to get started'));}
+  }else{panel.append(h('div',{className:'empty-panel'},'No unbilled packets — all up to date'));}
   grid.append(panel);
-
-  // sidebar
-  const sidebar=h('div',{className:'sidebar'});
-  const qa=h('div',{className:'panel'});
-  qa.append(h('div',{className:'panel-header'},h('span',{className:'panel-title'},'Quick Actions')));
-  const qaBody=h('div',{className:'qa-list'});
-  qaBody.append(
-    h('button',{className:'qa-btn',onClick:()=>{S.view='records';render();}},h('div',{className:'qa-icon',style:{color:'var(--color-teal-600)',background:'var(--color-teal-50)'},htmlContent:I.search}),h('div',{className:'qa-text'},h('span',{className:'qa-label'},'Search Records'),h('span',{className:'qa-hint'},'Find by ref, date or name'))),
-    h('button',{className:'qa-btn',onClick:()=>{
-      S.view='billing';S.billing.step=1;
-      S.billing.filters={statuses:[],dateRange:'lastmonth',dateFrom:'',dateTo:''};
-      S.billing.selectedItemIds=new Set();S.billing.initialised=false;
-      S.billing.retailers=[];S.billing.retailerIdx=0;
-      S.billing.generatedPDFs={};S.billing.runId=null;
-      render();
-    }},h('div',{className:'qa-icon',style:{color:'var(--color-violet-600)',background:'var(--color-violet-50)'},htmlContent:I.dollar}),h('div',{className:'qa-text'},h('span',{className:'qa-label'},'Run Billing'),h('span',{className:'qa-hint'},'Generate invoices and PDFs'))),
-  );
-  qa.append(qaBody);sidebar.append(qa);
-
-  // Retailer breakdown - this month only
-  const now2=new Date();
-  const monthStart2=new Date(now2.getFullYear(),now2.getMonth(),1);
-  const thisMonthPkts=S.packets.filter(p=>{
-    if(!statusShowDash(p.status_id))return false;
-    const d=parseStoredDate(p.date);
-    return d&&d>=monthStart2;
-  });
-  const retailersThisMonth={};
-  thisMonthPkts.forEach(r=>{const n=retailerName(r.retailer_id)||'Unknown';retailersThisMonth[n]=(retailersThisMonth[n]||0)+1;});
-  if(Object.keys(retailersThisMonth).length){
-    const rb=h('div',{className:'panel'});
-    rb.append(h('div',{className:'panel-header'},h('span',{className:'panel-title'},'By Retailer'),h('span',{style:{fontSize:'12px',color:'var(--color-muted-foreground)'}},'this month')));
-    const rbBody=h('div',{style:{padding:'18px 22px',display:'flex',flexDirection:'column',gap:'14px'}});
-    const max=Math.max(...Object.values(retailersThisMonth));
-    const colors={Alexandra:'plum',Queenstown:'ember'};
-    for(const[name,count]of Object.entries(retailersThisMonth).sort((a,b)=>b[1]-a[1])){
-      const pct=Math.round((count/max)*100);const cl=colors[name]||'plum';
-      rbBody.append(h('div',{style:{display:'flex',alignItems:'center',gap:'12px'}},
-        h('span',{style:{fontSize:'13.5px',fontWeight:'500',flex:'1',color:'var(--color-foreground)'}},name),
-        h('div',{style:{flex:'2',height:'8px',background:'var(--color-border-light)',borderRadius:'4px',overflow:'hidden'}},h('div',{style:{width:pct+'%',height:'100%',borderRadius:'4px',background:cl==='plum'?'var(--color-violet-600)':'var(--color-amber-600)'}})),
-        h('span',{style:{fontFamily:'var(--font-serif)',fontSize:'18px',fontWeight:'600',color:'var(--color-foreground)',minWidth:'32px',textAlign:'right'}},String(count)),
-      ));
-    }
-    rb.append(rbBody);sidebar.append(rb);
-  }
-  grid.append(sidebar);c.append(grid);return c;
+  c.append(grid);return c;
 }
 
 
@@ -735,12 +717,23 @@ function renderRecords(){
     drSel.append(o);
   });
   drSel.addEventListener('change',e=>{f.dateRange=e.target.value;if(f.dateRange!=='custom'){f.dateFrom='';f.dateTo='';}render();});
+
+  // Sort — only show when dataset is small enough to be meaningful
+  const SORT_THRESHOLD=500;
+  if(applyRecordFilters(S.packets).length<=SORT_THRESHOLD){
+    const sortSel=h('select',{className:'select',style:{width:'160px'}});
+    [['date_desc','Date (newest)'],['date_asc','Date (oldest)'],['surname_asc','Surname (A–Z)'],['surname_desc','Surname (Z–A)']].forEach(([v,l])=>{
+      const o=h('option',{value:v},l);if(f.sort===v)o.selected=true;sortSel.append(o);
+    });
+    sortSel.addEventListener('change',e=>{f.sort=e.target.value;render();});
+    filterRow.append(fld('Sort',sortSel));
+  }
+
   filterRow.append(fld('Date Range',drSel));
 
-  // Reset — fixed width (80px) so the custom date row can offset by the same amount
   const hasF=f.search||f.statuses.length||f.retailerId||f.user!=='all'||f.dateRange!=='all'||f.showArchived;
   const resetBtn=h('button',{className:'btn btn-secondary',style:{alignSelf:'flex-end',flexShrink:'0',width:'80px'},onClick:()=>{
-    S.recFilters={search:'',statuses:[],showArchived:false,retailerId:null,user:'all',dateRange:'all',dateFrom:'',dateTo:''};
+    S.recFilters={search:'',statuses:[],showArchived:false,retailerId:null,user:'all',dateRange:'all',dateFrom:'',dateTo:'',sort:'date_desc'};
     S.selectedPacketIds=new Set();render();
   }},'Reset');
   resetBtn.disabled=!hasF;
@@ -789,6 +782,15 @@ function renderRecords(){
     em.append(h('p',{className:'empty-state-title'},'No packets match your filters'),h('p',{className:'empty-state-hint'},'Try adjusting the filters above'));
     c.append(em);return c;
   }
+
+  // Sort
+  const sortFns={
+    date_desc:(a,b)=>new Date(b.date)-new Date(a.date),
+    date_asc:(a,b)=>new Date(a.date)-new Date(b.date),
+    surname_asc:(a,b)=>(a.surname||'').localeCompare(b.surname||''),
+    surname_desc:(a,b)=>(b.surname||'').localeCompare(a.surname||''),
+  };
+  filtered.sort(sortFns[f.sort]||sortFns.date_desc);
 
   // Table
   const panel=h('div',{style:{overflowX:'auto'}});
@@ -839,6 +841,7 @@ function renderForm(packet){
   window.scrollTo(0,0);
   const isEdit=!!packet;
   const defaultPct=S.user==='paula'?100:0;
+  let updateFormTotal=null;
 
   // Guard -- if lookups not loaded yet
   if(!S.retailers.length||!S.jobTypes.length||!S.items.length){
@@ -942,8 +945,15 @@ function renderForm(packet){
     const isArchived=curStatusName==='Archived';
     const billingDisabled=isHold||isArchived;
 
-    // Title row: "Packet Details" + "Delete this packet" link
-    const delBtn=h('button',{className:'btn-link-destructive',style:{padding:'0'},onClick:()=>{
+    // Title row: "Packet Details" + live total
+    const editTotalSpan=h('span',{style:{fontSize:'var(--text-2xl)',fontWeight:'var(--font-bold)',fontFamily:'var(--font-mono)',color:'var(--color-foreground)'}},fmtMoney(formItems.reduce((s,i)=>s+(parseFloat(i.cost)||0),0)));
+    updateFormTotal=()=>{editTotalSpan.textContent=fmtMoney(formItems.reduce((s,i)=>s+(parseFloat(i.cost)||0),0));};
+    headerSection.append(h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',padding:'var(--space-2) 0',marginBottom:'var(--space-3)'}},
+      h('p',{className:'h2',style:{margin:0,padding:0}},'Packet Details'),
+      editTotalSpan
+    ));
+
+    const delBtn=h('button',{className:'btn-link-destructive',style:{padding:'0',fontSize:'var(--text-sm)',marginBottom:'var(--space-2)'},onClick:()=>{
       showDeleteConfirm(async()=>{
         const existingItems=await sbAll('packet_items','&packet_id=eq.'+packet.id)||[];
         for(const ei of existingItems)await sbDelete('packet_items',ei.id);
@@ -953,10 +963,7 @@ function renderForm(packet){
         toast('Packet deleted');
       });
     }},'Delete this packet');
-    headerSection.append(h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'var(--space-2) 0',marginBottom:'var(--space-3)'}},
-      h('p',{className:'h2',style:{margin:0,padding:0}},'Packet Details'),
-      delBtn
-    ));
+    headerSection.append(delBtn);
 
     if(packet.shipping_run_id){
       const run=(S.shippingRuns||[]).find(r=>r.id===packet.shipping_run_id);
@@ -1050,12 +1057,19 @@ function renderForm(packet){
       lozengeRow.append(loz);
     });
     const billingFlagsRow=h('div',{style:{display:'flex',gap:'var(--space-2)',alignItems:'center'}});
-    [{label:'Paula',billedKey:'paula_billed',otherKey:'gabby_billed',otherPctField:'paula_pct'},{label:'Gabby',billedKey:'gabby_billed',otherKey:'paula_billed',otherPctField:'gabrielle_pct'}].forEach(({label,billedKey,otherKey,otherPctField})=>{
+    [{label:'Paula',billedKey:'paula_billed',otherKey:'gabby_billed',otherPctField:'gabrielle_pct',myPctField:'paula_pct'},{label:'Gabby',billedKey:'gabby_billed',otherKey:'paula_billed',otherPctField:'paula_pct',myPctField:'gabrielle_pct'}].forEach(({label,billedKey,otherKey,otherPctField,myPctField})=>{
       const isBilled=packet[billedKey]||false;
+      const isNA=formItems.length>0&&formItems.every(i=>(label==='Paula'?i.paulaPct:i.gabriellePct)===0);
       const unbilledClass=label==='Paula'?'unbilled-paula':'unbilled-gabby';
-      const btn=h('button',{className:'billing-flag-btn '+(isBilled?'billed':unbilledClass)});
-      btn.textContent=label+': '+(isBilled?'Billed':'Unbilled');
-      if(billingDisabled)btn.disabled=true;
+      const btn=h('button',{className:'billing-flag-btn '+(isBilled?'billed':isNA?'':unbilledClass)});
+      if(isNA){
+        btn.textContent=label+': N/A';
+        btn.style.cssText='opacity:0.45;cursor:default;background:var(--color-secondary);color:var(--color-muted-foreground);border-color:var(--color-border);';
+        btn.disabled=true;
+      } else {
+        btn.textContent=label+': '+(isBilled?'Billed':'Unbilled');
+      }
+      if(billingDisabled&&!isNA)btn.disabled=true;
       btn.addEventListener('click',async()=>{
         const newVal=!isBilled;
         const updateData={[billedKey]:newVal,modified:fmtD(new Date())};
@@ -1078,7 +1092,13 @@ function renderForm(packet){
     // Spacer between status row and fields (edit mode only)
     headerSection.append(h('div',{style:{height:'var(--space-10)'}}));
   } else {
-    headerSection.append(h('h2',{className:'h2'},'Packet Details'));
+    const itemTotal=formItems.reduce((s,i)=>s+(parseFloat(i.cost)||0),0);
+    const totalSpan=h('span',{style:{fontSize:'var(--text-2xl)',fontWeight:'var(--font-bold)',fontFamily:'var(--font-mono)',color:'var(--color-foreground)'}},fmtMoney(itemTotal));
+    headerSection.append(h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between'}},
+      h('h2',{className:'h2',style:{margin:0}},'Packet Details'),
+      totalSpan,
+    ));
+    updateFormTotal=()=>{totalSpan.textContent=fmtMoney(formItems.reduce((s,i)=>s+(parseFloat(i.cost)||0),0));};
   }
   const headerGrid=h('div',{className:'form-grid'});
 
@@ -1236,6 +1256,7 @@ function renderForm(packet){
       item.jobTypeId=parseInt(e.target.value);
       item.cost=jobTypeCost(item.jobTypeId);
       costIn.value=item.cost.toFixed(2);
+      if(updateFormTotal)updateFormTotal();
     });
     jtFld.append(jtSel);topGrid.append(jtFld);
 
@@ -1243,7 +1264,7 @@ function renderForm(packet){
     const costFld=h('div',{style:{textAlign:'right'}},h('label',{className:'label'},'Cost'));
     const costWrap=h('div',{className:'cost-wrap'});
     costWrap.append(h('span',{className:'cost-symbol'},'$'),costIn);
-    costIn.addEventListener('input',e=>{item.cost=parseFloat(e.target.value)||0;});
+    costIn.addEventListener('input',e=>{item.cost=parseFloat(e.target.value)||0;if(updateFormTotal)updateFormTotal();});
     costFld.append(costWrap);topGrid.append(costFld);
     card.append(topGrid);
 
@@ -1293,6 +1314,7 @@ function renderForm(packet){
   const addItemBtn=h('button',{className:'btn btn-secondary',style:{width:'100%',justifyContent:'center'},onClick:()=>{
     formItems.push(makeItem());
     rebuildItemsStack();
+    if(updateFormTotal)updateFormTotal();
   }});
   addItemBtn.innerHTML=I.plus+'  Add Another Item';
 
@@ -1395,6 +1417,15 @@ function renderForm(packet){
   }
 
   async function doSave(saveAndNew=false){
+    // Block saves on effectively-billed packets to prevent accidental edits
+    if(isEdit&&packet){
+      const dbItems=S.allPacketItems.filter(i=>i.packet_id===packet.id);
+      if(isEffectivelyBilled(packet,dbItems)){
+        showToast('This packet is fully billed — edit items in the database directly or contact admin.',true);
+        return;
+      }
+    }
+
     const validation = validateForm();
     if (!validation.valid) {
       if (validation.firstError) {
@@ -1446,18 +1477,20 @@ function renderForm(packet){
 function getBillingItems(){
   const f=S.billing.filters;
   const user=S.user;
-  // Filter packets: current user not yet billed, not Hold/Archived, date range
+  // Filter packets: New status only, current user not yet billed
   let pkts=S.packets.filter(p=>{
-    // Exclude Hold from Billing and Archived
-    const sName=statusName(p.status_id);
-    if(sName==='Hold from Billing'||sName==='Archived')return false;
-    // Exclude if current user has already billed this packet
+    if(p.status_id!==statusId('New'))return false;
     if(user==='paula'&&(p.paula_billed||false))return false;
     if(user==='gabby'&&(p.gabby_billed||false))return false;
     return true;
   });
-  // Apply any additional status filter from UI
-  if(f.statuses.length)pkts=pkts.filter(p=>f.statuses.includes(p.status_id));
+  // Retailer / sub-customer filter
+  if(f.retailerKey){
+    const [ridStr,subCust]=f.retailerKey.split(':');
+    const rid=parseInt(ridStr);
+    pkts=pkts.filter(p=>p.retailer_id===rid);
+    if(subCust)pkts=pkts.filter(p=>p.sub_customer===subCust);
+  }
   // Date range
   let dr=null;
   if(f.dateRange!=='all'&&f.dateRange!=='custom')dr=getDateRange(f.dateRange);
@@ -1467,11 +1500,10 @@ function getBillingItems(){
   const pktIds=new Set(pkts.map(p=>p.id));
   return S.allPacketItems.filter(i=>{
     if(!pktIds.has(i.packet_id))return false;
-    // For combined-billing retailers, Gabby invoices full cost — include all items
-    const pkt=S.packets.find(p=>p.id===i.packet_id);
-    if(pkt&&isRetailerCombined(pkt.retailer_id)&&user==='gabby')return true;
-    // Standard: exclude if this user has 0% on this item
-    const pct=user==='paula'?(i.paula_pct||0):(i.gabrielle_pct||0);
+    // Gabby always invoices full cost to retailer — include all items regardless of her pct
+    if(user==='gabby')return true;
+    // Paula invoices Gabby for her share — exclude items where paula has 0%
+    const pct=(i.paula_pct||0);
     return pct>0;
   });
 }
@@ -1481,14 +1513,27 @@ function invoiceGroup(jtName){return INVOICE_GROUPS[jtName]||'Valuations';}
 function isRetailerCombined(retailerId){const r=S.retailers.find(r=>r.id===retailerId);return !!(r&&r.combined_billing);}
 
 function nextInvoiceNumber(){
+  // Use taxInvoices as source of truth once populated; fall back to shippingRuns for pre-migration data
+  const source=(S.taxInvoices&&S.taxInvoices.length)?S.taxInvoices:S.shippingRuns;
   let max=0;
-  (S.shippingRuns||[]).forEach(r=>{
+  (source||[]).forEach(r=>{
     if(r.invoice_number){
       const m=r.invoice_number.match(/^INV-(\d+)$/);
       if(m)max=Math.max(max,parseInt(m[1],10));
     }
   });
   return'INV-'+(max+1).toString().padStart(4,'0');
+}
+
+function nextPackingSlipNumber(){
+  let max=0;
+  (S.shippingRuns||[]).forEach(r=>{
+    if(r.packing_slip_number){
+      const m=r.packing_slip_number.match(/^PS-(\d+)$/);
+      if(m)max=Math.max(max,parseInt(m[1],10));
+    }
+  });
+  return'PS-'+(max+1).toString().padStart(4,'0');
 }
 
 function getShippingForBilling(retailerId){
@@ -1535,9 +1580,10 @@ function buildInvoiceSummary(items,retailerId){
   const discountPct=retailer?retailer.discount_pct||0:0;
   const discountMult=1-discountPct/100;
   const isNJRetailer=retailer&&retailer.name==='Nationwide Jewellers';
-  const isCombined=!!(retailer&&retailer.combined_billing);
-  const isCombinedGabby=isCombined&&user==='gabby';
-  const isCombinedPaula=isCombined&&user==='paula';
+  // All retailers now use unified model: Gabby invoices retailer at full cost, Paula invoices Gabby
+  const isCombined=true;
+  const isCombinedGabby=user==='gabby';
+  const isCombinedPaula=user==='paula';
 
   // Pre-seed in display order: Valuations first, then Stock, then Pearl Threading
   const byJobType={'Valuations':0,'Stock':0,'Pearl Threading':0};
@@ -1602,19 +1648,8 @@ function renderBillingStep1(){
 
   // Filter bar — same structure as Records page
 
-  const fb=h('div',{style:{borderRadius:'var(--radius-3xl)',padding:'var(--space-5) 0',marginBottom:'var(--space-4)',display:'flex',flexDirection:'column',gap:'var(--space-3)'}});
+  const fb=h('div',{style:{padding:'var(--space-5) 0',marginBottom:'var(--space-4)',display:'flex',flexDirection:'column',gap:'var(--space-3)'}});
   const filterRow=h('div',{style:{display:'flex',gap:'var(--space-4)',alignItems:'flex-end'}});
-
-  // Status select (single-select, "All" default — same pattern as Records)
-  const stSel=h('select',{className:'select',style:{width:'180px'}});
-  stSel.append(h('option',{value:''},'All Statuses'));
-  S.billingStatuses.filter(s=>s.name!=='Archived').forEach(s=>{
-    const o=h('option',{value:String(s.id)},s.name);
-    if(f.statuses.length===1&&f.statuses[0]===s.id)o.selected=true;
-    stSel.append(o);
-  });
-  stSel.addEventListener('change',e=>{f.statuses=e.target.value?[parseInt(e.target.value)]:[];render();});
-  filterRow.append(fld('Status',stSel));
 
   // Date Range — select + inline date inputs when custom is active
   const drWrap=h('div',{style:{display:'flex',gap:'var(--space-2)',alignItems:'center'}});
@@ -1635,16 +1670,58 @@ function renderBillingStep1(){
   }
   filterRow.append(fld('Date Range',drWrap));
 
+  // Retailer select — must be chosen before Start is enabled
+  const retSel=h('select',{className:'select',style:{width:'220px'}});
+  retSel.append(h('option',{value:''},'Select retailer...'));
+  S.retailers.forEach(r=>{
+    // Combined-billing retailers (NJ) bill as a single group — one option
+    // Non-combined retailers with sub-customers (Direct) bill per sub-customer
+    const subs=!r.combined_billing?S.subCustomers.filter(sc=>sc.retailer_id===r.id):[];
+    if(subs.length){
+      subs.forEach(sc=>{
+        const val=r.id+':'+sc.name;
+        const o=h('option',{value:val},sc.name);
+        if(f.retailerKey===val)o.selected=true;
+        retSel.append(o);
+      });
+    } else {
+      const val=String(r.id);
+      const o=h('option',{value:val},r.name);
+      if(f.retailerKey===val)o.selected=true;
+      retSel.append(o);
+    }
+  });
+  retSel.addEventListener('change',e=>{f.retailerKey=e.target.value;b.selectedItemIds=new Set();b.initialised=false;render();});
+  const retWrap=h('div',{style:{display:'flex',alignItems:'center',gap:'var(--space-3)'}});
+  retWrap.append(retSel);
+  if(!f.retailerKey)retWrap.append(h('span',{className:'empty-state-hint'},'Select a retailer to begin'));
+  // Sort
+  const bSortSel=h('select',{className:'select',style:{width:'160px'}});
+  [['date_desc','Date (newest)'],['date_asc','Date (oldest)'],['surname_asc','Surname (A–Z)'],['surname_desc','Surname (Z–A)']].forEach(([v,l])=>{
+    const o=h('option',{value:v},l);if(f.sort===v)o.selected=true;bSortSel.append(o);
+  });
+  bSortSel.addEventListener('change',e=>{f.sort=e.target.value;render();});
+  filterRow.append(fld('Sort',bSortSel));
+  filterRow.append(fld('Retailer',retWrap));
+
   fb.append(filterRow);
   c.append(fb);
 
   // Items table
-  const allItems=getBillingItems();
+  let allItems=getBillingItems();
   const user=S.user;
 
-  // Auto-select all items on first load only
-  // Use initialised flag so unchecking all doesn't re-trigger auto-select
-  if(allItems.length&&!b.initialised){
+  // Sort items
+  const bSortFns={
+    date_desc:(a,b)=>new Date((S.packets.find(p=>p.id===b.packet_id)||{}).date||0)-new Date((S.packets.find(p=>p.id===a.packet_id)||{}).date||0),
+    date_asc:(a,b)=>new Date((S.packets.find(p=>p.id===a.packet_id)||{}).date||0)-new Date((S.packets.find(p=>p.id===b.packet_id)||{}).date||0),
+    surname_asc:(a,b)=>((S.packets.find(p=>p.id===a.packet_id)||{}).surname||'').localeCompare((S.packets.find(p=>p.id===b.packet_id)||{}).surname||''),
+    surname_desc:(a,b)=>((S.packets.find(p=>p.id===b.packet_id)||{}).surname||'').localeCompare((S.packets.find(p=>p.id===a.packet_id)||{}).surname||''),
+  };
+  allItems=allItems.slice().sort(bSortFns[f.sort]||bSortFns.date_desc);
+
+  // Auto-select all items on first load, but only once a retailer is chosen
+  if(f.retailerKey&&allItems.length&&!b.initialised){
     allItems.forEach(i=>b.selectedItemIds.add(i.id));
     b.initialised=true;
   }
@@ -1667,12 +1744,11 @@ function renderBillingStep1(){
     tbl.append(h('thead',{},h('tr',{},
       h('th',{className:'table-header',style:{width:'36px'}},allChk),
       h('th',{className:'table-header'},'Date'),
-      h('th',{className:'table-header'},'Ref'),
       h('th',{className:'table-header'},'Surname'),
       h('th',{className:'table-header'},'Retailer'),
-      h('th',{className:'table-header'},'Item'),
       h('th',{className:'table-header'},'Job Type'),
       h('th',{className:'table-header',style:{textAlign:'right'}},user==='paula'?'Paula ($)':'Gabby ($)'),
+      h('th',{className:'table-header',style:{textAlign:'right'}},'Total ($)'),
     )));
     const tb=h('tbody',{});
 
@@ -1682,7 +1758,6 @@ function renderBillingStep1(){
       const cost=parseFloat(i.cost)||0;
       const pct=(user==='paula'?(i.paula_pct||0):(i.gabrielle_pct||0))/100;
       const userCost=cost*pct;
-      const retName=retailerName(pkt.retailer_id);
       const cb=h('input',{type:'checkbox'});
       cb.checked=b.selectedItemIds.has(i.id);
       cb.addEventListener('change',()=>{b.selectedItemIds[cb.checked?'add':'delete'](i.id);render();});
@@ -1692,12 +1767,11 @@ function renderBillingStep1(){
       tb.append(h('tr',trAttrs,
         h('td',{style:{width:'36px'}},cb),
         h('td',{},pkt.date||''),
-        h('td',{className:'mono'},pkt.customer_ref||''),
-        h('td',{className:'name-cell'},pkt.surname||''),
-        h('td',{},retName),
-        h('td',{},i.item||''),
-        h('td',{},jt.name||''),
+        h('td',{style:{maxWidth:'120px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},pkt.surname||''),
+        h('td',{style:{maxWidth:'120px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},pkt.sub_customer||retailerName(pkt.retailer_id)),
+        h('td',{style:{maxWidth:'100px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},jt.name||''),
         h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)',fontSize:'var(--text-sm)'}},fmtMoney(userCost)),
+        h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)',fontSize:'var(--text-sm)'}},fmtMoney(cost)),
       ));
     });
     tbl.append(tb);panel.append(tbl);c.append(panel);
@@ -1709,31 +1783,21 @@ function renderBillingStep1(){
     h('span',{style:{fontSize:'var(--text-sm)',color:'var(--color-muted-foreground)'}},selCount+' item'+(selCount!==1?'s':'')+' selected'),
     h('div',{style:{display:'flex',gap:'var(--space-2-5)'}},
       h('button',{className:'btn btn-secondary',onClick:()=>{S.view='home';render();}},'Cancel'),
-      h('button',{className:'btn btn-primary',onClick:()=>{
-        if(b.selectedItemIds.size===0){showToast('No items selected',true);return;}
-        const retIds=[];
-        S.retailers.forEach(r=>{
-          const has=S.allPacketItems.some(i=>b.selectedItemIds.has(i.id)&&(S.packets.find(p=>p.id===i.packet_id)||{}).retailer_id===r.id);
-          if(has)retIds.push(r.id);
-        });
-        if(!retIds.length){showToast('No matching retailers found',true);return;}
-        b.retailers=retIds;b.retailerIdx=0;b.step=2;render();
-      }},'Start'),
+      (()=>{const startDisabled=!f.retailerKey||b.selectedItemIds.size===0;const startAttrs={className:'btn btn-primary',onClick:()=>{const rid=parseInt(f.retailerKey.split(':')[0]);b.retailers=[rid];b.retailerIdx=0;b.step=2;render();}};if(startDisabled)startAttrs.disabled='';return h('button',startAttrs,'Start');})(),
     ),
   );
   c.append(footer);
   return c;
 }
 
-// STEP 2 -- Retailer loop
+// STEP 2 -- Invoice summary
 function renderBillingStep2(){
   const b=S.billing;
-  const retailerId=b.retailers[b.retailerIdx];
+  const retailerId=b.retailers[0];
   const retName=retailerName(retailerId);
-  const totalRetailers=b.retailers.length;
-  const isLast=b.retailerIdx===totalRetailers-1;
   const user=S.user;
   const displayName=user==='paula'?'Paula':'Gabby';
+  const cu=getCurrentUser();
 
   // Get selected items for this retailer
   const myItems=S.allPacketItems.filter(i=>b.selectedItemIds.has(i.id)&&(S.packets.find(p=>p.id===i.packet_id)||{}).retailer_id===retailerId);
@@ -1745,28 +1809,34 @@ function renderBillingStep2(){
   const modal=h('div',{className:'modal'});
 
   // Header
+  const userColour=cu.slug==='gabby'?'var(--color-teal-600)':'var(--color-pink-700)';
+  const userLetter=cu.slug==='gabby'?'G':'P';
   const hdr=h('div',{className:'modal-header'});
   hdr.append(
-    h('div',{},
-      h('div',{className:'modal-title'},retName+' -- '+(isCombinedGabby?'All':isCombinedPaula?'Invoice Gabby':'Invoice Summary')),
-      h('div',{className:'modal-subtitle'},(isCombinedPaula?'Invoice to: Gabby Lovering':displayName)+'  -  '+(b.retailerIdx+1)+' of '+totalRetailers+' retailers'),
-    ),
-    stepIndicator(b.retailerIdx+1, totalRetailers),
+    h('h1',{className:'h1',style:{paddingLeft:'var(--space-4)'}},retName+' - '+(isCombinedGabby?'ALL':'PAULA ONLY')),
+    h('div',{style:{width:'50px',height:'50px',borderRadius:'50%',background:userColour,color:'var(--color-background)',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:'var(--font-extrabold)',fontSize:'var(--text-4xl)',flexShrink:'0',fontFamily:'var(--font-display)',marginRight:'var(--space-4)'}},userLetter),
   );
   modal.append(hdr);
 
   // Body
   const body=h('div',{className:'modal-body'});
 
-  // Selection criteria reminder
-  const f=b.filters;
-  const criteriaText='Status: '+(f.statuses.map(id=>statusName(id)).join(', ')||'All')+'  -  Date: '+(f.dateRange==='all'?'All dates':f.dateRange==='custom'?f.dateFrom+' to '+f.dateTo:f.dateRange);
-  body.append(h('p',{style:{fontSize:'12px',color:'var(--color-muted-foreground)',marginBottom:'16px'}},criteriaText));
+  // Date range from selected packet dates
+  const allPktDates=myItems.map(i=>(S.packets.find(p=>p.id===i.packet_id)||{}).date).filter(Boolean);
+  const sortedPktDates=allPktDates.slice().sort((a,b)=>{const pa=parseStoredDate(a),pb=parseStoredDate(b);return pa&&pb?pa-pb:0;});
+  const dateRangeSuffix=sortedPktDates.length?' - '+sortedPktDates[0]+' - '+sortedPktDates[sortedPktDates.length-1]:'';
 
-  // Invoice summary -- copy/paste (shown first, most important)
-  body.append(h('h3',{style:{fontFamily:'var(--font-serif)',fontSize:'14px',fontWeight:'600',color:'var(--color-foreground)',margin:'0 0 8px'}},'Invoice Summary -- copy/paste into billing system'));
-  const sumTbl=h('table',{className:'summary-table'});
-  sumTbl.append(h('thead',{},h('tr',{},h('th',{},'Description'),h('th',{className:'right'},'Amount'))));
+  // Invoice summary heading
+  body.append(
+    h('h2',{className:'h2',style:{marginBottom:'var(--space-1)',paddingLeft:'var(--space-4)'}},'Invoice Summary'),
+    h('p',{style:{fontSize:'var(--text-sm)',color:'var(--color-muted-foreground)',marginBottom:'var(--space-4)',paddingLeft:'var(--space-4)'}},'Copy and paste into billing system'),
+  );
+
+  // Helper: total-row td style
+  const totalTd=(txt,right)=>h('td',{style:{borderTop:'1px solid var(--color-border)',fontWeight:'var(--font-semibold)',textAlign:right?'right':'left'}},txt);
+
+  const sumTbl=h('table',{className:'table'});
+  sumTbl.append(h('thead',{},h('tr',{},h('th',{className:'table-header'},'Description'),h('th',{className:'table-header',style:{textAlign:'right'}},'Amount'))));
   const stb=h('tbody',{});
 
   const shippingExGST=shipping.totalExGST;
@@ -1775,58 +1845,67 @@ function renderBillingStep2(){
     Object.entries(summary.bySubCustomer).forEach(([sc,jobTypes])=>{
       const scTotal=Object.values(jobTypes).reduce((a,v)=>a+v,0);
       const valLabel='Valuations - '+sc+(shipping.dateLabel?' - '+shipping.dateLabel:'');
-      stb.append(h('tr',{},h('td',{},valLabel),h('td',{className:'right'},fmtMoney(scTotal))));
+      stb.append(h('tr',{},h('td',{},valLabel),h('td',{style:{textAlign:'right'}},fmtMoney(scTotal))));
       const scShipCost=shipping.bySubCustomer[sc]||0;
       const scShipCount=shipping.bySubCustomerRunCount[sc]||0;
       if(scShipCost>0){
         const scShipExGST=shipping.bySubCustomerExGST[sc]||0;
         const shipLabel='Shipping - '+sc+(shipping.dateLabel?' - '+shipping.dateLabel:'')+' ('+scShipCount+')';
-        stb.append(h('tr',{},h('td',{},shipLabel),h('td',{className:'right'},fmtMoney(scShipExGST))));
+        stb.append(h('tr',{},h('td',{},shipLabel),h('td',{style:{textAlign:'right'}},fmtMoney(scShipExGST))));
       }
     });
-    stb.append(h('tr',{className:'total-row'},h('td',{},'Subtotal (before discount)'),h('td',{className:'right'},fmtMoney(summary.subtotal/(1-summary.discountPct/100)))));
-    stb.append(h('tr',{},h('td',{style:{color:'var(--color-muted-foreground)'}},'Discount ('+summary.discountPct+'%)'),h('td',{className:'right',style:{color:'var(--color-amber-600)'}},'-'+fmtMoney(summary.subtotal/(1-summary.discountPct/100)-summary.subtotal))));
-    stb.append(h('tr',{className:'total-row'},h('td',{},'Subtotal (after discount)'),h('td',{className:'right'},fmtMoney(summary.subtotal))));
+    stb.append(h('tr',{},totalTd('Subtotal (before discount)'),totalTd(fmtMoney(summary.subtotal/(1-summary.discountPct/100)),true)));
+    stb.append(h('tr',{},h('td',{style:{color:'var(--color-muted-foreground)'}},'Discount ('+summary.discountPct+'%)'),h('td',{style:{textAlign:'right',color:'var(--color-amber-600)'}},'-'+fmtMoney(summary.subtotal/(1-summary.discountPct/100)-summary.subtotal))));
+    stb.append(h('tr',{},totalTd('Subtotal (after discount)'),totalTd(fmtMoney(summary.subtotal),true)));
     if(shipping.total>0){
       const totalShipLabel='Shipping'+(shipping.dateLabel?' '+shipping.dateLabel:'')+' ('+shipping.runCount+')';
-      stb.append(h('tr',{},h('td',{},totalShipLabel),h('td',{className:'right'},fmtMoney(shippingExGST))));
+      stb.append(h('tr',{},h('td',{},totalShipLabel),h('td',{style:{textAlign:'right'}},fmtMoney(shippingExGST))));
     }
   } else {
     // Non-NJ: flat job type list then shipping
     Object.entries(summary.byJobType).forEach(([name,amt])=>{
-      stb.append(h('tr',{},h('td',{},name),h('td',{className:'right'},fmtMoney(amt))));
+      stb.append(h('tr',{},h('td',{},name+dateRangeSuffix),h('td',{style:{textAlign:'right'}},fmtMoney(amt))));
     });
     if(shipping.total>0){
       const shipLabel='Shipping'+(shipping.dateLabel?' '+shipping.dateLabel:'')+' ('+shipping.runCount+')';
-      stb.append(h('tr',{},h('td',{},shipLabel),h('td',{className:'right'},fmtMoney(shippingExGST))));
+      stb.append(h('tr',{},h('td',{},shipLabel),h('td',{style:{textAlign:'right'}},fmtMoney(shippingExGST))));
     }
-    stb.append(h('tr',{className:'total-row'},h('td',{},'Subtotal'),h('td',{className:'right'},fmtMoney(summary.subtotal+shippingExGST))));
+    stb.append(h('tr',{},totalTd('Subtotal'),totalTd(fmtMoney(summary.subtotal+shippingExGST),true)));
   }
 
-  const cu=getCurrentUser();
   const gstBase=summary.subtotal+shippingExGST;
   const grandTotal=cu.gst_registered?gstBase*(1+cu.gst_rate/100):gstBase;
-  const gstRows=[];
   if(cu.gst_registered){
-    gstRows.push(h('tr',{},h('td',{style:{color:'var(--color-muted-foreground)'}},'GST ('+cu.gst_rate+'%)'),h('td',{className:'right',style:{color:'var(--color-muted-foreground)'}},fmtMoney(gstBase*(cu.gst_rate/100)))));
+    stb.append(h('tr',{},h('td',{style:{color:'var(--color-muted-foreground)'}},'GST ('+cu.gst_rate+'%)'),h('td',{style:{textAlign:'right',color:'var(--color-muted-foreground)'}},fmtMoney(gstBase*(cu.gst_rate/100)))));
   }
-  stb.append(
-    ...gstRows,
-    h('tr',{className:'total-row'},h('td',{},'Total'),h('td',{className:'right'},fmtMoney(grandTotal))),
-  );
+  stb.append(h('tr',{},totalTd('Total'),totalTd(fmtMoney(grandTotal),true)));
   sumTbl.append(stb);body.append(sumTbl);
 
-  // Items table -- shown below the invoice summary
-  body.append(h('h3',{style:{fontFamily:'var(--font-serif)',fontSize:'14px',fontWeight:'600',color:'var(--color-foreground)',margin:'24px 0 8px'}},'Items included ('+myItems.length+')'));
-  const tbl=h('table',{className:'summary-table'});
-  tbl.append(h('thead',{},h('tr',{},h('th',{},'Date'),h('th',{},'Ref'),h('th',{},'Surname'),h('th',{},'Item'),h('th',{},'Job Type'),h('th',{className:'right'},'Cost ($)'))));
+  // Items table
+  body.append(h('h3',{className:'h3',style:{marginTop:'var(--space-6)',marginBottom:'var(--space-2)',paddingLeft:'var(--space-4)'}},'Items included ('+myItems.length+')'));
+  const tbl=h('table',{className:'table'});
+  tbl.append(h('thead',{},h('tr',{},
+    h('th',{className:'table-header'},'Date'),
+    h('th',{className:'table-header'},'Ref'),
+    h('th',{className:'table-header'},'Surname'),
+    h('th',{className:'table-header'},'Item'),
+    h('th',{className:'table-header'},'Job Type'),
+    h('th',{className:'table-header',style:{textAlign:'right'}},'Cost ($)'),
+  )));
   const tb=h('tbody',{});
   myItems.forEach(i=>{
     const pkt=S.packets.find(p=>p.id===i.packet_id)||{};
     const jt=S.jobTypes.find(j=>j.id===i.job_type_id)||{};
     const cost=parseFloat(i.cost)||0;
     const pct=isCombinedGabby?1:(user==='paula'?(i.paula_pct||0):(i.gabrielle_pct||0))/100;
-    tb.append(h('tr',{},h('td',{},pkt.date||''),h('td',{style:{fontFamily:'var(--font-mono)',fontSize:'12px'}},pkt.customer_ref||''),h('td',{},pkt.surname||''),h('td',{},i.item||''),h('td',{},jt.name||''),h('td',{className:'right'},fmtMoney(cost*pct))));
+    tb.append(h('tr',{},
+      h('td',{},pkt.date||''),
+      h('td',{className:'mono'},pkt.customer_ref||''),
+      h('td',{},pkt.surname||''),
+      h('td',{},i.item||''),
+      h('td',{},jt.name||''),
+      h('td',{style:{textAlign:'right'}},fmtMoney(cost*pct)),
+    ));
   });
   tbl.append(tb);body.append(tbl);
   modal.append(body);
@@ -1834,21 +1913,16 @@ function renderBillingStep2(){
   // Footer
   const foot=h('div',{className:'modal-footer'});
   foot.append(
-    h('button',{className:'btn btn-secondary',onClick:()=>{if(b.retailerIdx===0){b.step=1;}else{b.retailerIdx--;} render();}},ic('back'),'Back'),
+    h('button',{className:'btn btn-secondary',onClick:()=>{b.step=1;render();}},ic('back'),'Back'),
     h('div',{className:'modal-footer-right'},
       h('button',{className:'btn btn-secondary',onClick:()=>{S.view='home';b.step=0;render();}},'Cancel'),
-      h('button',{className:'btn btn-primary',onClick:()=>{
-        if(isLast){b.step=3;render();}
-        else{b.retailerIdx++;render();}
-      }},isLast?'Generate PDFs':'Next'),
+      h('button',{className:'btn btn-primary',onClick:()=>{b.step=3;render();}},'Generate PDF'),
     ),
   );
   modal.append(foot);
   overlay.append(modal);
 
-  // Render overlay over current view
   const c=h('div',{});
-  // background page
   c.append(h('div',{style:{filter:'blur(2px)',pointerEvents:'none'}},renderBillingStep1()));
   c.append(overlay);
   return c;
@@ -1994,45 +2068,29 @@ function downloadTextAsPDF(text, filename){
 
 function renderBillingStep3(){
   const b=S.billing;
+  const retailerId=b.retailers[0];
+  const retName=retailerName(retailerId);
+  const pdfText=generatePDFContent(retailerId);
+
   const c=h('div',{});
-  c.append(h('div',{className:'dash-header'},
-    h('div',{},h('h1',{className:'dash-greeting',style:{fontSize:'24px'}},'Generate PDFs'),h('p',{className:'dash-date'},'Preview and download reports for each retailer')),
+  c.append(h('div',{className:'page-header'},
+    h('h1',{className:'h1'},'Generate PDF'),
   ));
 
-  const user=S.user;
-  const displayName=user==='paula'?'Paula':'Gabby';
-
-  b.retailers.forEach(retailerId=>{
-    const retName=retailerName(retailerId);
-    const pdfText=generatePDFContent(retailerId);
-    const card=h('div',{className:'panel',style:{marginBottom:'16px'}});
-    card.append(h('div',{className:'panel-header'},
-      h('span',{className:'panel-title'},retName),
-      h('button',{className:'btn btn-primary btn-sm',onClick:()=>{
-        downloadTextAsPDF(pdfText,'billing_'+retName.toLowerCase().replace(/\s/g,'_')+'_'+new Date().toISOString().slice(0,10)+'.pdf');
-      }},ic('download'),'Download PDF'),
-    ));
-    // Preview
-    const preview=h('div',{className:'pdf-preview',style:{margin:'0 20px 20px',fontFamily:'monospace',fontSize:'11px',lineHeight:'1.5',background:'var(--color-secondary)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-md)',padding:'16px',maxHeight:'260px',overflowY:'auto'}},pdfText);
-    card.append(preview);
-    c.append(card);
-  });
-
-  // Download all button
-  if(b.retailers.length>1){
-    c.append(h('div',{style:{textAlign:'center',marginBottom:'16px'}},
-      h('button',{className:'btn btn-secondary',onClick:()=>{
-        b.retailers.forEach(rid=>{
-          const retName=retailerName(rid);
-          downloadTextAsPDF(generatePDFContent(rid),'billing_'+retName.toLowerCase().replace(/\s/g,'_')+'_'+new Date().toISOString().slice(0,10)+'.pdf');
-        });
-      }},ic('download'),'Download All PDFs'),
-    ));
-  }
+  const card=h('div',{className:'panel',style:{marginBottom:'16px'}});
+  card.append(h('div',{className:'panel-header'},
+    h('span',{className:'panel-title'},retName),
+    h('button',{className:'btn btn-primary btn-sm',onClick:()=>{
+      downloadTextAsPDF(pdfText,'billing_'+retName.toLowerCase().replace(/\s/g,'_')+'_'+new Date().toISOString().slice(0,10)+'.pdf');
+    }},ic('download'),'Download PDF'),
+  ));
+  const preview=h('div',{className:'pdf-preview',style:{margin:'0 20px 20px',fontFamily:'monospace',fontSize:'11px',lineHeight:'1.5',background:'var(--color-secondary)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-md)',padding:'16px',maxHeight:'260px',overflowY:'auto'}},pdfText);
+  card.append(preview);
+  c.append(card);
 
   const footer=h('div',{style:{display:'flex',justifyContent:'space-between',paddingTop:'16px',borderTop:'1px solid var(--color-border)'}});
   footer.append(
-    h('button',{className:'btn btn-secondary',onClick:()=>{b.retailerIdx=b.retailers.length-1;b.step=2;render();}},ic('back'),'Back'),
+    h('button',{className:'btn btn-secondary',onClick:()=>{b.step=2;render();}},ic('back'),'Back'),
     h('div',{style:{display:'flex',gap:'10px'}},
       h('button',{className:'btn btn-secondary',onClick:()=>{S.view='home';b.step=0;render();}},'Cancel'),
       h('button',{className:'btn btn-primary',onClick:()=>{b.step=4;render();}},'Confirm + Mark as Billed'),
@@ -2170,6 +2228,20 @@ function renderReports(){
     h('p',{style:{fontSize:'13px',color:'var(--color-muted-foreground)',lineHeight:'1.5'}},'Total cost by customer across both users. Filter by retailer and date range.'),
   );
   crCard.append(crBody);grid.append(crCard);
+
+  // Tax Invoices card
+  const tiCard=h('div',{className:'panel',style:{cursor:'pointer',transition:'box-shadow .2s,transform .15s'},
+    onClick:()=>{S.view='taxInvoices';render();}});
+  tiCard.addEventListener('mouseenter',()=>{tiCard.style.boxShadow='var(--shadow-md)';tiCard.style.transform='translateY(-2px)';});
+  tiCard.addEventListener('mouseleave',()=>{tiCard.style.boxShadow='';tiCard.style.transform='';});
+  const tiBody=h('div',{style:{padding:'28px 24px'}});
+  tiBody.append(
+    h('div',{style:{width:'44px',height:'44px',background:'var(--color-gold-50,#fffbeb)',borderRadius:'12px',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'16px',color:'var(--color-gold-600,#d97706)'},htmlContent:I.dollar}),
+    h('h3',{style:{fontFamily:'var(--font-serif)',fontSize:'17px',fontWeight:'600',color:'var(--color-foreground)',marginBottom:'8px'}},'Tax Invoices'),
+    h('p',{style:{fontSize:'13px',color:'var(--color-muted-foreground)',lineHeight:'1.5'}},'Nationwide Jewellers tax invoices. View, filter and reprint by sub-customer and date.'),
+    h('p',{style:{fontSize:'12px',color:'var(--color-muted-foreground)',marginTop:'12px'}},(S.taxInvoices||[]).length+' invoice'+((S.taxInvoices||[]).length!==1?'s':'')+' recorded'),
+  );
+  tiCard.append(tiBody);grid.append(tiCard);
 
   // Shipping Audit card
   const srCard=h('div',{className:'panel',style:{cursor:'pointer',transition:'box-shadow .2s,transform .15s'},
@@ -2631,47 +2703,27 @@ function renderShipping(){
   return c;
 }
 
-function openShipmentModal(filteredPackets){
-  const sel=S.shippingSelected;
-  const selectedPackets=filteredPackets.filter(p=>sel.has(p.id));
-  if(!selectedPackets.length)return;
-
-  const firstPacket=selectedPackets[0];
-  const retailer=S.retailers.find(r=>r.id===firstPacket.retailer_id);
-  const isNJ=retailer?.name==='Nationwide Jewellers';
-  const subCust=firstPacket.sub_customer||'';
-  const subtitle=(retailer?.name||'')+(subCust?' — '+subCust:'')+'  ·  '+selectedPackets.length+' packet'+(selectedPackets.length>1?'s':'');
+function printPackingSlip(packets,retailerId,subCust,shipDate,shippingCost,psNumber){
+  const retailer=S.retailers.find(r=>r.id===retailerId);
   const discountMult=1-((retailer?.discount_pct)||0)/100;
-
-  let shipDate=todayISO();
-  let shipCost='99.99';
-  let trackLast4='';
-  let saving=false;
-  let step=1;
-  let invoiceNum=null;
-
-  const fmt=fmtMoney;
-
-  function getPacketRows(){
-    return selectedPackets.map(p=>{
-      const items=S.allPacketItems.filter(i=>i.packet_id===p.id);
-      const amount=items.reduce((s,i)=>(s+(parseFloat(i.cost)||0)*discountMult),0);
-      return{ref:p.customer_ref,surname:p.surname,itemCount:items.length,amount};
-    });
-  }
-
-  function printPackingSlip(){
-    const rows=getPacketRows();
-    const packetsTotal=rows.reduce((s,r)=>s+r.amount,0);
-    const shipping=parseFloat(shipCost)||0;
-    const grandTotal=packetsTotal+shipping;
-    const dateStr=new Date().toLocaleDateString('en-NZ',{day:'numeric',month:'long',year:'numeric'});
-    const rowsHtml=rows.map(r=>`<tr><td>${r.ref}</td><td>${r.surname} (${r.itemCount})</td><td style="text-align:right">${fmt(r.amount)}</td></tr>`).join('');
-    const win=window.open('','_blank','width=800,height=600');
-    win.document.write(`<!DOCTYPE html><html><head><title>Packing Slip</title>
+  const rows=packets.map(p=>{
+    const items=S.allPacketItems.filter(i=>i.packet_id===p.id);
+    const amount=items.reduce((s,i)=>(s+(parseFloat(i.cost)||0)*discountMult),0);
+    return{ref:p.customer_ref,surname:p.surname,itemCount:items.length,amount};
+  });
+  const packetsTotal=rows.reduce((s,r)=>s+r.amount,0);
+  const shipping=parseFloat(shippingCost)||0;
+  const grandTotal=packetsTotal+shipping;
+  const dateStr=new Date().toLocaleDateString('en-NZ',{day:'numeric',month:'long',year:'numeric'});
+  const rowsHtml=rows.map(r=>`<tr><td>${r.ref}</td><td>${r.surname||''} (${r.itemCount})</td><td style="text-align:right">${fmtMoney(r.amount)}</td></tr>`).join('');
+  const retDisplay=(retailer?.name||'')+(subCust?' — '+subCust:'');
+  const win=window.open('','_blank','width=800,height=600');
+  win.document.write(`<!DOCTYPE html><html><head><title>Packing Slip${psNumber?' '+psNumber:''}</title>
 <style>
 body{font-family:Arial,sans-serif;padding:40px;color:#111;max-width:600px;}
-h1{font-size:22px;margin:0 0 4px;}
+.title-row{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px;}
+h1{font-size:22px;margin:0;}
+.ps-number{font-size:14px;color:#555;font-weight:600;}
 .meta{font-size:13px;color:#555;margin-bottom:24px;line-height:1.8;}
 table{width:100%;border-collapse:collapse;margin-top:8px;font-size:13px;}
 th{text-align:left;border-bottom:2px solid #111;padding:6px 4px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;}
@@ -2682,51 +2734,55 @@ td:last-child{text-align:right;}
 .grand-total td{font-weight:700;border-top:2px solid #111;border-bottom:none;padding-top:8px;}
 @media print{body{padding:20px;}}
 </style></head><body>
-<h1>Packing Slip</h1>
+<div class="title-row"><h1>Packing Slip</h1>${psNumber?`<span class="ps-number">${psNumber}</span>`:''}</div>
 <div class="meta">
-<strong>To:</strong> ${retailer?.name||''}${subCust?' — '+subCust:''}<br>
+<strong>To:</strong> ${retDisplay}<br>
 <strong>Date:</strong> ${dateStr}<br>
-<strong>Packets:</strong> ${selectedPackets.length}
+<strong>Packets:</strong> ${packets.length}
 </div>
 <table>
 <thead><tr><th>Reference</th><th>Customer</th><th style="text-align:right">Amount</th></tr></thead>
 <tbody>${rowsHtml}</tbody>
 <tfoot>
-<tr class="subtotal"><td colspan="2">Appraisals</td><td style="text-align:right">${fmt(packetsTotal)}</td></tr>
-<tr class="shipping"><td colspan="2">Shipping</td><td style="text-align:right">${fmt(shipping)}</td></tr>
-<tr class="grand-total"><td colspan="2">Total</td><td style="text-align:right">${fmt(grandTotal)}</td></tr>
+<tr class="subtotal"><td colspan="2">Appraisals</td><td style="text-align:right">${fmtMoney(packetsTotal)}</td></tr>
+<tr class="shipping"><td colspan="2">Shipping</td><td style="text-align:right">${fmtMoney(shipping)}</td></tr>
+<tr class="grand-total"><td colspan="2">Total</td><td style="text-align:right">${fmtMoney(grandTotal)}</td></tr>
 </tfoot>
 </table>
 </body></html>`);
-    win.document.close();
-    win.focus();
-    win.print();
-  }
+  win.document.close();win.focus();win.print();
+}
 
-  function printInvoice(){
-    const rows=getPacketRows();
-    const subCustRec=S.subCustomers.find(sc=>sc.name===subCust&&sc.retailer_id===firstPacket.retailer_id);
-    const addrLines=[
-      subCustRec?.address_line1||'',
-      subCustRec?.suburb||'',
-      (subCustRec?.city||'')+(subCustRec?.postcode?' '+subCustRec.postcode:''),
-      'New Zealand'
-    ].filter(Boolean);
-    const toAddr=addrLines.map(l=>`<div>${l}</div>`).join('');
-    const cu=getCurrentUser();
-    const gstRate=cu.gst_registered?(cu.gst_rate||15)/100:0;
-    const valuationsTotal=rows.reduce((s,r)=>s+r.amount,0);
-    const shippingStored=parseFloat(shipCost)||0;
-    const shippingExGST=shippingStored/1.15;
-    const subtotal=valuationsTotal+shippingExGST;
-    const gst=subtotal*gstRate;
-    const amountDue=subtotal+gst;
-    const fmtN=n=>n.toFixed(2);
-    const issuedStr=new Date(shipDate+'T00:00:00').toLocaleDateString('en-NZ',{day:'numeric',month:'long',year:'numeric'});
-    const rowsHtml=rows.map(r=>`<tr><td>${r.ref} — ${r.surname||''} (${r.itemCount} item${r.itemCount!==1?'s':''})</td><td>1</td><td style="text-align:right">${fmtN(r.amount)}</td><td style="text-align:right">${fmtN(r.amount)}</td></tr>`).join('');
-    const shippingRow=shippingStored>0?`<tr><td>Shipping</td><td>1</td><td style="text-align:right">${fmtN(shippingExGST)}</td><td style="text-align:right">${fmtN(shippingExGST)}</td></tr>`:'';
-    const win=window.open('','_blank','width=800,height=900');
-    win.document.write(`<!DOCTYPE html><html><head><title>Tax Invoice ${invoiceNum||''}</title>
+function printInvoice(packets,retailerId,subCust,invoiceNum,shipDate,shippingCost){
+  const retailer=S.retailers.find(r=>r.id===retailerId);
+  const discountMult=1-((retailer?.discount_pct)||0)/100;
+  const rows=packets.map(p=>{
+    const items=S.allPacketItems.filter(i=>i.packet_id===p.id);
+    const amount=items.reduce((s,i)=>(s+(parseFloat(i.cost)||0)*discountMult),0);
+    return{ref:p.customer_ref,surname:p.surname,itemCount:items.length,amount};
+  });
+  const subCustRec=S.subCustomers.find(sc=>sc.name===subCust&&sc.retailer_id===retailerId);
+  const addrLines=[
+    subCustRec?.address_line1||'',
+    subCustRec?.suburb||'',
+    (subCustRec?.city||'')+(subCustRec?.postcode?' '+subCustRec.postcode:''),
+    'New Zealand'
+  ].filter(Boolean);
+  const toAddr=addrLines.map(l=>`<div>${l}</div>`).join('');
+  const cu=getCurrentUser();
+  const gstRate=cu.gst_registered?(cu.gst_rate||15)/100:0;
+  const valuationsTotal=rows.reduce((s,r)=>s+r.amount,0);
+  const shippingStored=parseFloat(shippingCost)||0;
+  const shippingExGST=shippingStored/1.15;
+  const subtotal=valuationsTotal+shippingExGST;
+  const gst=subtotal*gstRate;
+  const amountDue=subtotal+gst;
+  const fmtN=n=>n.toFixed(2);
+  const issuedStr=new Date(shipDate+'T00:00:00').toLocaleDateString('en-NZ',{day:'numeric',month:'long',year:'numeric'});
+  const rowsHtml=rows.map(r=>`<tr><td>${r.ref} — ${r.surname||''} (${r.itemCount} item${r.itemCount!==1?'s':''})</td><td>1</td><td style="text-align:right">${fmtN(r.amount)}</td><td style="text-align:right">${fmtN(r.amount)}</td></tr>`).join('');
+  const shippingRow=shippingStored>0?`<tr><td>Shipping</td><td>1</td><td style="text-align:right">${fmtN(shippingExGST)}</td><td style="text-align:right">${fmtN(shippingExGST)}</td></tr>`:'';
+  const win=window.open('','_blank','width=800,height=900');
+  win.document.write(`<!DOCTYPE html><html><head><title>Tax Invoice ${invoiceNum||''}</title>
 <style>
 body{font-family:Arial,sans-serif;padding:40px;color:#111;max-width:700px;font-size:13px;}
 h1{font-size:28px;font-weight:700;margin:0 0 32px;letter-spacing:-0.5px;}
@@ -2777,10 +2833,41 @@ td:nth-child(2),td:nth-child(3),td:nth-child(4){text-align:right;}
 </tfoot>
 </table>
 </body></html>`);
-    win.document.close();
-    win.focus();
-    win.print();
+  win.document.close();win.focus();win.print();
+}
+
+function openShipmentModal(filteredPackets){
+  const sel=S.shippingSelected;
+  const selectedPackets=filteredPackets.filter(p=>sel.has(p.id));
+  if(!selectedPackets.length)return;
+
+  const firstPacket=selectedPackets[0];
+  const retailer=S.retailers.find(r=>r.id===firstPacket.retailer_id);
+  const isNJ=retailer?.name==='Nationwide Jewellers';
+  const subCust=firstPacket.sub_customer||'';
+  const subtitle=(retailer?.name||'')+(subCust?' — '+subCust:'')+'  ·  '+selectedPackets.length+' packet'+(selectedPackets.length>1?'s':'');
+  const discountMult=1-((retailer?.discount_pct)||0)/100;
+
+  let shipDate=todayISO();
+  let shipCost='99.99';
+  let trackLast4='';
+  let saving=false;
+  let step=1;
+  let invoiceNum=null;
+  let psNumber=null;
+
+  const fmt=fmtMoney;
+
+  function getPacketRows(){
+    return selectedPackets.map(p=>{
+      const items=S.allPacketItems.filter(i=>i.packet_id===p.id);
+      const amount=items.reduce((s,i)=>(s+(parseFloat(i.cost)||0)*discountMult),0);
+      return{ref:p.customer_ref,surname:p.surname,itemCount:items.length,amount};
+    });
   }
+
+  function doPrintPackingSlip(){if(!psNumber)psNumber=nextPackingSlipNumber();printPackingSlip(selectedPackets,firstPacket.retailer_id,subCust,shipDate,shipCost,psNumber);}
+  function doPrintInvoice(){printInvoice(selectedPackets,firstPacket.retailer_id,subCust,invoiceNum,shipDate,shipCost);}
 
   function closeModal(){
     document.querySelector('.shipment-modal-overlay')?.remove();
@@ -2870,8 +2957,8 @@ td:nth-child(2),td:nth-child(3),td:nth-child(4){text-align:right;}
       printBtn.className='btn btn-primary';
       printBtn.textContent=isNJ?'Print Invoice':'Print Packing Slip';
       printBtn.addEventListener('click',()=>{
-        if(isNJ){if(!invoiceNum)invoiceNum=nextInvoiceNumber();try{printInvoice();}catch(e){console.warn('Print failed:',e);}}
-        else{try{printPackingSlip();}catch(e){console.warn('Print failed:',e);}}
+        if(isNJ){if(!invoiceNum)invoiceNum=nextInvoiceNumber();try{doPrintInvoice();}catch(e){console.warn('Print failed:',e);}}
+        else{try{doPrintPackingSlip();}catch(e){console.warn('Print failed:',e);}}
         step=2;buildModal();
       });
       foot.append(cancelBtn,h('div',{className:'modal-footer-right'},printBtn));
@@ -2884,8 +2971,8 @@ td:nth-child(2),td:nth-child(3),td:nth-child(4){text-align:right;}
       reprintLink.style.cssText='font-size:var(--text-sm);margin-bottom:var(--space-4);display:block;';
       reprintLink.textContent=isNJ?'Reprint invoice':'Reprint packing slip';
       reprintLink.addEventListener('click',()=>{
-        if(isNJ){try{printInvoice();}catch(e){console.warn('Print failed:',e);}}
-        else{try{printPackingSlip();}catch(e){console.warn('Print failed:',e);}}
+        if(isNJ){try{doPrintInvoice();}catch(e){console.warn('Print failed:',e);}}
+        else{try{doPrintPackingSlip();}catch(e){console.warn('Print failed:',e);}}
       });
       body.append(reprintLink);
       const fieldsGrid=h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'var(--space-4)',marginBottom:'var(--space-4)'}});
@@ -2926,10 +3013,16 @@ td:nth-child(2),td:nth-child(3),td:nth-child(4){text-align:right;}
           const runId=gid();
           const runData={id:runId,ship_date:shipDate,shipping_cost:cost,tracking_last4:trackLast4,retailer_id:firstPacket.retailer_id,sub_customer_name:subCust||null,created:todayISO()};
           if(isNJ&&invoiceNum)runData.invoice_number=invoiceNum;
+          if(!isNJ&&psNumber)runData.packing_slip_number=psNumber;
           await sbInsert('shipping_runs',runData);
+          if(isNJ&&invoiceNum){
+            try{await sbInsert('tax_invoices',{id:gid(),invoice_number:invoiceNum,shipping_run_id:runId,issue_date:shipDate,retailer_id:firstPacket.retailer_id,sub_customer_name:subCust||null,status:'active',created:todayISO()});}
+            catch(e2){console.warn('tax_invoices insert failed:',e2);}
+          }
           for(const p of selectedPackets){await sbUpdate('packets',p.id,{shipping_run_id:runId});}
           S.packets=await sbAll('packets','&order=created.desc')||S.packets;
           try{S.shippingRuns=await sbAll('shipping_runs','&order=created.desc')||S.shippingRuns;}catch(e2){console.warn(e2);}
+          try{S.taxInvoices=await sbAll('tax_invoices','&order=created.desc')||S.taxInvoices;}catch(e2){console.warn(e2);}
           S.shippingSelected=new Set();
           closeModal();
           showToast('Shipment recorded');
@@ -2948,6 +3041,141 @@ td:nth-child(2),td:nth-child(3),td:nth-child(4){text-align:right;}
     document.body.append(overlay);
   }
   buildModal();
+}
+
+function renderAdmin(){
+  const c=h('div',{});
+  c.append(h('div',{className:'page-header'},h('h1',{className:'h1'},'Admin')));
+
+  function wip(title,desc){
+    const card=h('div',{style:{background:'var(--color-card)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'var(--space-6)',marginBottom:'var(--space-5)'}});
+    const hdr=h('div',{style:{display:'flex',alignItems:'center',gap:'var(--space-3)',marginBottom:'var(--space-2)'}});
+    hdr.append(h('h2',{style:{fontSize:'var(--text-lg)',fontWeight:'var(--font-semibold)',margin:0}},title));
+    hdr.append(h('span',{style:{fontSize:'var(--text-xs)',fontWeight:'var(--font-medium)',padding:'2px 8px',borderRadius:'var(--radius-full)',background:'var(--color-amber-100,#fef3c7)',color:'var(--color-amber-700,#b45309)'}},'Work in Progress'));
+    card.append(hdr);
+    card.append(h('p',{style:{fontSize:'var(--text-sm)',color:'var(--color-muted-foreground)',margin:0}},desc));
+    return card;
+  }
+
+  c.append(wip('Shipping Runs Admin','View, edit, and delete shipping runs. Add or remove individual packets from a run. Deleting a run clears shipping_run_id on all linked packets and removes the run record.'));
+  c.append(wip('Tax Invoice Admin','Void tax invoices, reissue with corrected packet sets, and manage INV-XXXX records. Operates on tax_invoices table; shipping run record is not duplicated here. Access will be restricted to admin users only.'));
+  return c;
+}
+
+function renderTaxInvoices(){
+  const sr=S.taxInvoicesReport;
+  const c=h('div',{});
+  c.append(renderBreadcrumb('Tax Invoices'));
+  c.append(h('div',{className:'page-header'},h('h1',{className:'h1'},'Tax Invoices')));
+
+  // Filter bar — sub-customer first, then date range (so date range can expand below for custom)
+  if(S.taxInvoicesSubCustomer==null)S.taxInvoicesSubCustomer='';
+  const fb=h('div',{style:{padding:'var(--space-5) 0',marginBottom:'var(--space-4)',display:'flex',flexDirection:'column',gap:'var(--space-3)'}});
+  const filterRow=h('div',{style:{display:'flex',gap:'var(--space-4)',alignItems:'flex-end'}});
+
+  const scSel=h('select',{className:'select',style:{width:'200px'}});
+  const allScNames=[...new Set((S.taxInvoices||[]).map(i=>i.sub_customer_name||'').filter(Boolean))].sort();
+  scSel.append(h('option',{value:''},'All sub-customers'));
+  allScNames.forEach(sc=>{const o=h('option',{value:sc},sc);if(S.taxInvoicesSubCustomer===sc)o.selected=true;scSel.append(o);});
+  scSel.addEventListener('change',e=>{S.taxInvoicesSubCustomer=e.target.value;render();});
+  filterRow.append(fld('Sub-customer',scSel));
+
+  const fmtD2=d=>new Date(d).toLocaleDateString('en-NZ',{day:'numeric',month:'short'});
+  const drSel=h('select',{className:'select',style:{width:'160px'}});
+  [['month','This Month'],['lastmonth','Last Month'],['thisfy','This FY'],['lastfy','Last FY'],['custom','Custom']].forEach(([v,l])=>{
+    let label=l;
+    if(v==='custom'&&sr.dateRange==='custom'&&sr.dateFrom&&sr.dateTo)label=fmtD2(sr.dateFrom)+' – '+fmtD2(sr.dateTo);
+    const o=h('option',{value:v},label);
+    if(sr.dateRange===v)o.selected=true;
+    drSel.append(o);
+  });
+  drSel.addEventListener('change',e=>{sr.dateRange=e.target.value;if(sr.dateRange!=='custom'){sr.dateFrom='';sr.dateTo='';}render();});
+  filterRow.append(fld('Date Range',drSel));
+
+  if(sr.dateRange==='custom'){
+    const fi=h('input',{type:'date',className:'input',style:{width:'150px'}});fi.value=sr.dateFrom;
+    const ti=h('input',{type:'date',className:'input',style:{width:'150px'}});ti.value=sr.dateTo;
+    fi.addEventListener('input',e=>{sr.dateFrom=e.target.value;render();});
+    ti.addEventListener('input',e=>{sr.dateTo=e.target.value;render();});
+    filterRow.append(
+      fld('From',fi),
+      fld('To',ti),
+    );
+  }
+  fb.append(filterRow);
+  c.append(fb);
+
+  // Date range filter using same logic as filterShippingRuns
+  let dr=null;
+  if(sr.dateRange!=='custom')dr=getDateRange(sr.dateRange);
+  else if(sr.dateFrom&&sr.dateTo)dr={from:new Date(sr.dateFrom),to:new Date(sr.dateTo+'T23:59:59')};
+
+  const invoices=(S.taxInvoices||[]).filter(inv=>{
+    if(S.taxInvoicesSubCustomer&&inv.sub_customer_name!==S.taxInvoicesSubCustomer)return false;
+    if(dr&&inv.issue_date){const d=new Date(inv.issue_date);if(d<dr.from||d>dr.to)return false;}
+    return true;
+  });
+
+  if(!invoices.length){
+    const em=h('div',{className:'empty-state'});em.innerHTML=I.dollar;
+    em.append(h('p',{className:'empty-state-title'},'No tax invoices in this period'),h('p',{className:'empty-state-hint'},'Tax invoices are created when NJ shipments are confirmed'));
+    c.append(em);return c;
+  }
+
+  const cu=getCurrentUser();
+  const gstRate=cu.gst_registered?(cu.gst_rate||15)/100:0;
+
+  const tbl=h('table',{className:'table'});
+  tbl.append(h('thead',{},h('tr',{},
+    h('th',{className:'table-header'},'Invoice #'),
+    h('th',{className:'table-header'},'Date'),
+    h('th',{className:'table-header'},'Sub-customer'),
+    h('th',{className:'table-header',style:{textAlign:'right'}},'Packets'),
+    h('th',{className:'table-header',style:{textAlign:'right'}},'Amount (inc. GST)'),
+    h('th',{className:'table-header'},''),
+  )));
+  const tbody=h('tbody',{});
+  let grandTotal=0;
+
+  invoices.forEach(inv=>{
+    const run=S.shippingRuns.find(r=>r.id===inv.shipping_run_id);
+    const retailer=run?S.retailers.find(r=>r.id===run.retailer_id):null;
+    const discountMult=1-((retailer?.discount_pct)||0)/100;
+    const runPackets=S.packets.filter(p=>p.shipping_run_id===inv.shipping_run_id);
+    const valuationsTotal=runPackets.reduce((sum,p)=>{
+      const items=S.allPacketItems.filter(i=>i.packet_id===p.id);
+      return sum+items.reduce((s,i)=>(s+(parseFloat(i.cost)||0)*discountMult),0);
+    },0);
+    const shippingExGST=run?(parseFloat(run.shipping_cost)||0)/1.15:0;
+    const subtotal=valuationsTotal+shippingExGST;
+    const total=subtotal*(1+gstRate);
+    grandTotal+=total;
+
+    const reprintBtn=h('button',{className:'btn-link',style:{fontSize:'var(--text-xs)'}},'Reprint');
+    reprintBtn.addEventListener('click',()=>{
+      try{printInvoice(runPackets,run?.retailer_id||0,inv.sub_customer_name||'',inv.invoice_number,inv.issue_date,run?.shipping_cost||0);}
+      catch(e){console.warn(e);}
+    });
+
+    tbody.append(h('tr',{},
+      h('td',{style:{fontFamily:'var(--font-mono)'}},inv.invoice_number||''),
+      h('td',{},inv.issue_date||''),
+      h('td',{},inv.sub_customer_name||''),
+      h('td',{style:{textAlign:'right'}},String(runPackets.length)),
+      h('td',{style:{textAlign:'right'}},fmtMoney(total)),
+      h('td',{},reprintBtn),
+    ));
+  });
+
+  tbody.append(h('tr',{style:{fontWeight:'var(--font-semibold)',borderTop:'2px solid var(--color-border)'}},
+    h('td',{colspan:'4',style:{fontWeight:'var(--font-semibold)'}},'Total ('+invoices.length+' invoice'+(invoices.length!==1?'s':'')+')'),
+    h('td',{style:{textAlign:'right',fontWeight:'var(--font-semibold)'}},fmtMoney(grandTotal)),
+    h('td',{}),
+  ));
+
+  tbl.append(tbody);
+  c.append(tbl);
+  return c;
 }
 
 function shippingReportFilterBar(sr,title){
@@ -3011,6 +3239,7 @@ function renderShippingReport(){
     h('th',{className:'table-header'},'Tracking'),
     h('th',{className:'table-header',style:{textAlign:'right'}},'Packets'),
     h('th',{className:'table-header',style:{textAlign:'right'}},'Cost'),
+    h('th',{className:'table-header'},''),
   )));
   const tbody=h('tbody',{});
   let totalCost=0;
@@ -3050,14 +3279,24 @@ function renderShippingReport(){
       chevron.style.transform=open?'rotate(90deg)':'';
       detailRows.forEach(dr=>{dr.style.display=open?'':'none';});
     });
+    const isNJRun=!!(run.invoice_number);
+    const reprintBtn=h('button',{className:'btn-link',style:{fontSize:'var(--text-xs)',whiteSpace:'nowrap'}},isNJRun?'Reprint Invoice':'Reprint Slip');
+    reprintBtn.addEventListener('click',e=>{
+      e.stopPropagation();
+      const runPkts=S.packets.filter(p=>p.shipping_run_id===run.id);
+      if(isNJRun){try{printInvoice(runPkts,run.retailer_id,run.sub_customer_name||'',run.invoice_number,run.ship_date,run.shipping_cost);}catch(err){console.warn(err);}}
+      else{try{printPackingSlip(runPkts,run.retailer_id,run.sub_customer_name||'',run.ship_date,run.shipping_cost,run.packing_slip_number||null);}catch(err){console.warn(err);}}
+    });
+    const docRef=run.invoice_number||run.packing_slip_number||'';
     summaryRow.append(
       h('td',{},chevron),
       h('td',{},run.ship_date||''),
       h('td',{},retailerName(run.retailer_id)+(run.sub_customer_name?' — '+run.sub_customer_name:'')),
-      h('td',{style:{fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',color:'var(--color-muted-foreground)'}},run.invoice_number||''),
+      h('td',{style:{fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',color:'var(--color-muted-foreground)'}},docRef),
       h('td',{},run.tracking_last4?'…'+run.tracking_last4:''),
       h('td',{style:{textAlign:'right'}},String(runPackets.length)),
       h('td',{style:{textAlign:'right'}},fmtMoney(cost)),
+      h('td',{},reprintBtn),
     );
     tbody.append(summaryRow,...detailRows);
   });
@@ -3065,6 +3304,7 @@ function renderShippingReport(){
   tbody.append(h('tr',{style:{fontWeight:'var(--font-semibold)',borderTop:'2px solid var(--color-border)'}},
     h('td',{colspan:'6',style:{fontWeight:'var(--font-semibold)'}},'Total ('+filtered.length+' run'+(filtered.length!==1?'s':'')+')'),
     h('td',{style:{textAlign:'right',fontWeight:'var(--font-semibold)'}},fmtMoney(totalCost)),
+    h('td',{}),
   ));
   tbl.append(tbody);
   c.append(tbl);
@@ -3136,6 +3376,8 @@ function render(){
   else if(S.view==='shipping')main.append(renderShipping());
   else if(S.view==='shippingReport')main.append(renderShippingReport());
   else if(S.view==='fulfilmentReport')main.append(renderFulfilmentReport());
+  else if(S.view==='taxInvoices')main.append(renderTaxInvoices());
+  else if(S.view==='admin')main.append(renderAdmin());
   else if(S.view==='edit'&&S.editId){
     const p=S.packets.find(x=>x.id===S.editId);
     if(p){

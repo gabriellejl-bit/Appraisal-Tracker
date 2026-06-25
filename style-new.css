@@ -604,7 +604,6 @@
   display:         flex;
   align-items:     center;
   justify-content: center;
-  padding:         var(--space-10);
 }
 
 .modal {
@@ -612,16 +611,17 @@
   border-radius:   var(--radius-3xl);
   box-shadow:      var(--shadow-lg);
   width:           100%;
-  max-width:       820px;
+  max-width:       66vw;
   max-height:      90vh;
   display:         flex;
   flex-direction:  column;
   overflow:        hidden;
+  padding:         var(--space-12);
 }
 
 .modal-header {
-  padding:         var(--space-10) var(--space-10) var(--space-5);
-  border-bottom:   1px solid var(--color-border);
+  padding:         var(--space-5) 0;
+  border-bottom:   none;
   display:         flex;
   align-items:     center;
   justify-content: space-between;
@@ -642,13 +642,13 @@
 }
 
 .modal-body {
-  padding:    var(--space-5) var(--space-10);
+  padding:    var(--space-5) 0;
   overflow-y: auto;
   flex:       1;
 }
 
 .modal-footer {
-  padding:         var(--space-5) var(--space-10) var(--space-10);
+  padding:         var(--space-5) 0 var(--space-5);
   border-top:      1px solid var(--color-border);
   display:         flex;
   align-items:     center;
@@ -703,6 +703,25 @@
   background: var(--color-secondary);
   color:      var(--color-secondary-foreground);
 }
+
+/* Rounded corners — override border-collapse so border-radius works on cells */
+.table {
+  border-collapse: separate;
+  border-spacing:  0;
+  border:          none;
+  border-radius:   var(--radius-xl);
+}
+
+/* Header bottom border via cells (tr borders don't render with border-separate) */
+.table thead th {
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* Corner cells */
+.table thead tr:first-child th:first-child { border-radius: var(--radius-xl) 0 0 0; }
+.table thead tr:first-child th:last-child  { border-radius: 0 var(--radius-xl) 0 0; }
+.table tbody tr:last-child  td:first-child { border-radius: 0 0 0 var(--radius-xl); }
+.table tbody tr:last-child  td:last-child  { border-radius: 0 0 var(--radius-xl) 0; }
 
 /* ============================================================
    BADGES
@@ -839,6 +858,7 @@
 .sidenav-section {
   display: flex;
   flex-direction: column;
+  padding: 0;
 }
 
 .sidenav-section + .sidenav-section {
@@ -852,7 +872,7 @@
   color: var(--color-sidebar-ghost);
   letter-spacing: var(--tracking-widest);
   text-transform: uppercase;
-  padding: var(--space-1) 0 var(--space-1) var(--space-6);
+  padding: var(--space-1) var(--space-7);
   margin-bottom: var(--space-1);
 }
 
@@ -892,6 +912,7 @@
 .nav-link.active {
   font-weight: var(--font-black);
   color: var(--color-sidebar-foreground);
+  background: transparent;
 }
 
 .nav-link > span {
