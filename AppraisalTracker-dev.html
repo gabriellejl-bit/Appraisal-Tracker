@@ -69,7 +69,7 @@ let S={
   view:'home',editId:null,search:'',subCustomers:[],shippingRuns:[],taxInvoices:[],
   shippingFilters:{retailerId:null,subCustomer:''},
   shippingSelected:new Set(),
-  shippingReport:{dateRange:'lastmonth',dateFrom:'',dateTo:''},
+  shippingReport:{dateRange:'month',dateFrom:'',dateTo:''},
   fulfilmentReport:{dateRange:'lastmonth',dateFrom:'',dateTo:''},
   taxInvoicesReport:{dateRange:'thisfy',dateFrom:'',dateTo:''},
   toast:null,tt:null,ready:false,online:true,user:'gabby',
@@ -304,6 +304,8 @@ function getDollarStats(){
   return{unbilled,earnedWeek,earnedMonth};
 }
 
+function scName(id){return id?S.subCustomers.find(sc=>sc.id===id)?.name||id:'';}
+
 function myPackets(){
   // Dashboard filters to current user -- we need packet_items for this
   // For now filter packets where we have any items (all shown, split shown per user)
@@ -345,7 +347,7 @@ async function savePacket(headerData, itemsData){
     date:headerData.date,
     retailer_id:headerData.retailerId,
     customer_ref:headerData.customerRef,
-    sub_customer:headerData.subCustomer||null,
+    sub_customer_id:headerData.subCustomer||null,
     surname:headerData.surname,
     status_id:statusId('New'),
     created:now,
@@ -372,7 +374,7 @@ async function updatePacket(pid, headerData, itemsData){
   await sbUpdate('packets',pid,{
     date:headerData.date,retailer_id:headerData.retailerId,
     customer_ref:headerData.customerRef,surname:headerData.surname,
-    sub_customer:headerData.subCustomer||null,modified:now,
+    sub_customer_id:headerData.subCustomer||null,modified:now,
   });
   // Delete old items and reinsert -- simplest approach for now
   const existing=await sbAll('packet_items','&packet_id=eq.'+pid);
@@ -610,7 +612,7 @@ function renderHome(){
         h('td',{className:'mono',style:{whiteSpace:'nowrap'}},r.date),
         h('td',{className:'mono',style:{whiteSpace:'nowrap'}},r.customer_ref),
         h('td',{style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'0'}},r.surname),
-        h('td',{style:{whiteSpace:'nowrap',fontSize:'13px',color:'var(--color-muted-foreground)'}},r.sub_customer||''),
+        h('td',{style:{whiteSpace:'nowrap',fontSize:'13px',color:'var(--color-muted-foreground)'}},scName(r.sub_customer_id)),
         h('td',{style:{whiteSpace:'nowrap',fontSize:'13px',color:'var(--color-muted-foreground)'}},retName),
         (()=>{const bl=packetBillingLabel(r);const sn=bl||statusName(r.status_id);return h('td',{style:{whiteSpace:'nowrap'}},h('span',{className:'badge',style:statusBadgeStyle(sn)},sn));})(),
         h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)',fontSize:'var(--text-sm)'}},String(pkItems.length)),
@@ -865,7 +867,7 @@ function renderForm(packet){
     customerRef:packet?packet.customer_ref:'',
     refSuffix:'',
     surname:packet?packet.surname:'',
-    subCustomer:packet?packet.sub_customer:'',
+    subCustomer:packet?packet.sub_customer_id:'',
   };
 
   const isNJ=()=>{const r=S.retailers.find(x=>x.id===hdr.retailerId);return r&&r.requires_shipping===true;}
@@ -1176,8 +1178,8 @@ function renderForm(packet){
     const sel=h('select',{className:'select'});
     sel.append(h('option',{value:''},'-- Select sub-customer --'));
     S.subCustomers.filter(sc=>sc.retailer_id===hdr.retailerId).forEach(sc=>{
-      const o=h('option',{value:sc.name},sc.name);
-      if(hdr.subCustomer===sc.name)o.selected=true;
+      const o=h('option',{value:sc.id},sc.name);
+      if(hdr.subCustomer===sc.id)o.selected=true;
       sel.append(o);
     });
     sel.addEventListener('change',e=>{
@@ -1489,7 +1491,7 @@ function getBillingItems(){
     const [ridStr,subCust]=f.retailerKey.split(':');
     const rid=parseInt(ridStr);
     pkts=pkts.filter(p=>p.retailer_id===rid);
-    if(subCust)pkts=pkts.filter(p=>p.sub_customer===subCust);
+    if(subCust)pkts=pkts.filter(p=>p.sub_customer_id===subCust);
   }
   // Date range
   let dr=null;
@@ -1554,7 +1556,7 @@ function getShippingForBilling(retailerId){
   runs.forEach(r=>{
     const cost=parseFloat(r.shipping_cost)||0;
     total+=cost;
-    const sc=r.sub_customer_name||'';
+    const sc=r.sub_customer_id||'';
     bySubCustomer[sc]=(bySubCustomer[sc]||0)+cost;
     bySubCustomerRunCount[sc]=(bySubCustomerRunCount[sc]||0)+1;
   });
@@ -1600,7 +1602,7 @@ function buildInvoiceSummary(items,retailerId){
     const grp=invoiceGroup(jtName);
     byJobType[grp]+=userCost;
     if(isNJRetailer){
-      const sc=pkt.sub_customer||'Unassigned';
+      const sc=pkt.sub_customer_id||'Unassigned';
       if(!bySubCustomer[sc])bySubCustomer[sc]={};
       if(!bySubCustomer[sc][jtName])bySubCustomer[sc][jtName]=0;
       bySubCustomer[sc][jtName]+=userCost;
@@ -1679,7 +1681,7 @@ function renderBillingStep1(){
     const subs=!r.combined_billing?S.subCustomers.filter(sc=>sc.retailer_id===r.id):[];
     if(subs.length){
       subs.forEach(sc=>{
-        const val=r.id+':'+sc.name;
+        const val=r.id+':'+sc.id;
         const o=h('option',{value:val},sc.name);
         if(f.retailerKey===val)o.selected=true;
         retSel.append(o);
@@ -1768,7 +1770,7 @@ function renderBillingStep1(){
         h('td',{style:{width:'36px'}},cb),
         h('td',{},pkt.date||''),
         h('td',{style:{maxWidth:'120px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},pkt.surname||''),
-        h('td',{style:{maxWidth:'120px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},pkt.sub_customer||retailerName(pkt.retailer_id)),
+        h('td',{style:{maxWidth:'120px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},scName(pkt.sub_customer_id)||retailerName(pkt.retailer_id)),
         h('td',{style:{maxWidth:'100px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},jt.name||''),
         h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)',fontSize:'var(--text-sm)'}},fmtMoney(userCost)),
         h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)',fontSize:'var(--text-sm)'}},fmtMoney(cost)),
@@ -1959,7 +1961,7 @@ function generatePDFContent(retailerId){
     const cost=(parseFloat(i.cost)||0)*discountMult;
     const pct=isCombinedGabby?1:(user==='paula'?(i.paula_pct||0):(i.gabrielle_pct||0))/100;
     return isNJRetailer
-      ?(pkt.date||'').padEnd(14)+(pkt.customer_ref||'').substring(0,16).padEnd(18)+(pkt.sub_customer||'').substring(0,12).padEnd(14)+(pkt.surname||'').substring(0,12).padEnd(14)+(i.item||'').substring(0,12).padEnd(14)+(jt.name||'').substring(0,16).padEnd(18)+fmtMoney(cost*pct).padStart(8)
+      ?(pkt.date||'').padEnd(14)+(pkt.customer_ref||'').substring(0,16).padEnd(18)+(scName(pkt.sub_customer_id)||'').substring(0,12).padEnd(14)+(pkt.surname||'').substring(0,12).padEnd(14)+(i.item||'').substring(0,12).padEnd(14)+(jt.name||'').substring(0,16).padEnd(18)+fmtMoney(cost*pct).padStart(8)
       :(pkt.date||'').padEnd(14)+(pkt.customer_ref||'').padEnd(12)+(pkt.surname||'').substring(0,14).padEnd(16)+(i.item||'').substring(0,16).padEnd(18)+(jt.name||'').substring(0,20).padEnd(22)+fmtMoney(cost*pct).padStart(8);
   };
   const fmtItemCost=i=>{
@@ -2579,7 +2581,7 @@ function renderShipping(){
   // Apply filter
   const filtered=allUnshipped.filter(p=>{
     if(sf.retailerId&&p.retailer_id!==sf.retailerId)return false;
-    if(sf.subCustomer&&p.sub_customer!==sf.subCustomer)return false;
+    if(sf.subCustomer&&p.sub_customer_id!==sf.subCustomer)return false;
     return true;
   });
 
@@ -2605,9 +2607,9 @@ function renderShipping(){
     if(scs.length){
       const grp=h('optgroup',{label:r.name});
       scs.forEach(sc=>{
-        const val=r.id+'|'+sc.name;
+        const val=r.id+'|'+sc.id;
         const o=h('option',{value:val},sc.name);
-        if(sf.retailerId===r.id&&sf.subCustomer===sc.name)o.selected=true;
+        if(sf.retailerId===r.id&&sf.subCustomer===sc.id)o.selected=true;
         grp.append(o);
       });
       retDrop.append(grp);
@@ -2626,7 +2628,7 @@ function renderShipping(){
       sf.retailerId=parseInt(rid);sf.subCustomer=sc||'';
       // Auto-select all packets matching the new filter
       S.shippingSelected=new Set(allUnshipped.filter(p=>
-        p.retailer_id===sf.retailerId&&(!sf.subCustomer||p.sub_customer===sf.subCustomer)
+        p.retailer_id===sf.retailerId&&(!sf.subCustomer||p.sub_customer_id===sf.subCustomer)
       ).map(p=>p.id));
     }
     render();
@@ -2679,7 +2681,7 @@ function renderShipping(){
     const cb=h('input',{type:'checkbox'});cb.checked=sel.has(p.id);
     cb.addEventListener('change',e=>{e.stopPropagation();e.target.checked?sel.add(p.id):sel.delete(p.id);render();});
     const itemCount=S.allPacketItems.filter(i=>i.packet_id===p.id).length;
-    const retailerLabel=p.sub_customer||S.retailers.find(r=>r.id===p.retailer_id)?.name||'';
+    const retailerLabel=scName(p.sub_customer_id)||S.retailers.find(r=>r.id===p.retailer_id)?.name||'';
     const row=h('tr',{style:{cursor:'pointer'},onClick:()=>{sel.has(p.id)?sel.delete(p.id):sel.add(p.id);render();}},
       h('td',{onClick:e=>e.stopPropagation()},cb),
       h('td',{},p.date),
@@ -2753,15 +2755,14 @@ td:last-child{text-align:right;}
   win.document.close();win.focus();win.print();
 }
 
-function printInvoice(packets,retailerId,subCust,invoiceNum,shipDate,shippingCost){
+function printInvoice(packets,retailerId,subCust,invoiceNum,shipDate,shippingCost,subCustId){
   const retailer=S.retailers.find(r=>r.id===retailerId);
-  const discountMult=1-((retailer?.discount_pct)||0)/100;
   const rows=packets.map(p=>{
     const items=S.allPacketItems.filter(i=>i.packet_id===p.id);
-    const amount=items.reduce((s,i)=>(s+(parseFloat(i.cost)||0)*discountMult),0);
+    const amount=items.reduce((s,i)=>(s+(parseFloat(i.cost)||0)),0);
     return{ref:p.customer_ref,surname:p.surname,itemCount:items.length,amount};
   });
-  const subCustRec=S.subCustomers.find(sc=>sc.name===subCust&&sc.retailer_id===retailerId);
+  const subCustRec=subCustId?S.subCustomers.find(sc=>sc.id===subCustId):S.subCustomers.find(sc=>sc.name===subCust&&sc.retailer_id===retailerId);
   const addrLines=[
     subCustRec?.address_line1||'',
     subCustRec?.suburb||'',
@@ -2844,12 +2845,13 @@ function openShipmentModal(filteredPackets){
   const firstPacket=selectedPackets[0];
   const retailer=S.retailers.find(r=>r.id===firstPacket.retailer_id);
   const isNJ=retailer?.name==='Nationwide Jewellers';
-  const subCust=firstPacket.sub_customer||'';
+  const subCustId=firstPacket.sub_customer_id||'';
+  const subCust=scName(subCustId);
   const subtitle=(retailer?.name||'')+(subCust?' — '+subCust:'')+'  ·  '+selectedPackets.length+' packet'+(selectedPackets.length>1?'s':'');
   const discountMult=1-((retailer?.discount_pct)||0)/100;
 
   let shipDate=todayISO();
-  let shipCost='99.99';
+  let shipCost='6';
   let trackLast4='';
   let saving=false;
   let step=1;
@@ -2861,13 +2863,13 @@ function openShipmentModal(filteredPackets){
   function getPacketRows(){
     return selectedPackets.map(p=>{
       const items=S.allPacketItems.filter(i=>i.packet_id===p.id);
-      const amount=items.reduce((s,i)=>(s+(parseFloat(i.cost)||0)*discountMult),0);
+      const amount=items.reduce((s,i)=>(s+(parseFloat(i.cost)||0)),0);
       return{ref:p.customer_ref,surname:p.surname,itemCount:items.length,amount};
     });
   }
 
   function doPrintPackingSlip(){if(!psNumber)psNumber=nextPackingSlipNumber();printPackingSlip(selectedPackets,firstPacket.retailer_id,subCust,shipDate,shipCost,psNumber);}
-  function doPrintInvoice(){printInvoice(selectedPackets,firstPacket.retailer_id,subCust,invoiceNum,shipDate,shipCost);}
+  function doPrintInvoice(){printInvoice(selectedPackets,firstPacket.retailer_id,subCust,invoiceNum,shipDate,shipCost,subCustId);}
 
   function closeModal(){
     document.querySelector('.shipment-modal-overlay')?.remove();
@@ -2929,21 +2931,41 @@ function openShipmentModal(filteredPackets){
       costRow.append(fld('Shipping Cost',costWrap));
       totalsWrap.append(costRow);
 
+      const cu=getCurrentUser();
+      const gstRate=cu.gst_registered?(cu.gst_rate||15)/100:0;
+      function calcTotals(){
+        const grossShip=parseFloat(shipCost)||0;
+        const netShip=grossShip/1.15;
+        const subtotal=packetsTotal+netShip;
+        const gst=subtotal*gstRate;
+        return{netShip,subtotal,gst,total:subtotal+gst};
+      }
+      const t0=calcTotals();
+
       const totalsGrid=h('div',{style:{display:'flex',flexDirection:'column',gap:'var(--space-1)',fontSize:'var(--text-sm)',color:'var(--color-muted-foreground)'}});
-      const appraisalsRow=h('div',{style:{display:'flex',justifyContent:'space-between'}},h('span',{},'Appraisals'),h('span',{},fmt(packetsTotal)));
-      const shippingRow=h('div',{style:{display:'flex',justifyContent:'space-between'}},h('span',{},'Shipping'),h('span',{id:'slip-shipping-val'},fmt(parseFloat(shipCost)||0)));
+      const shippingRow=h('div',{style:{display:'flex',justifyContent:'space-between'}},h('span',{},'Shipping'),h('span',{id:'slip-shipping-val'},fmt(t0.netShip)));
+      const subtotalRow=h('div',{style:{display:'flex',justifyContent:'space-between'}},h('span',{},'Subtotal'),h('span',{id:'slip-subtotal-val'},fmt(t0.subtotal)));
       const divEl=h('div',{style:{borderTop:'1px solid var(--color-border)',margin:'var(--space-1) 0'}});
-      const totalRow=h('div',{style:{display:'flex',justifyContent:'space-between',fontWeight:'var(--font-semibold)',color:'var(--color-foreground)'}},h('span',{},'Total'),h('span',{id:'slip-total-val'},fmt(packetsTotal+(parseFloat(shipCost)||0))));
-      totalsGrid.append(appraisalsRow,shippingRow,divEl,totalRow);
+      const totalRow=h('div',{style:{display:'flex',justifyContent:'space-between',fontWeight:'var(--font-semibold)',color:'var(--color-foreground)'}},h('span',{},'Total'),h('span',{id:'slip-total-val'},fmt(t0.total)));
+      totalsGrid.append(shippingRow,subtotalRow);
+      if(cu.gst_registered){
+        const gstRow=h('div',{style:{display:'flex',justifyContent:'space-between'}},h('span',{},'GST ('+cu.gst_rate+'%)'),h('span',{id:'slip-gst-val'},fmt(t0.gst)));
+        totalsGrid.append(gstRow);
+      }
+      totalsGrid.append(divEl,totalRow);
       totalsWrap.append(totalsGrid);
       body.append(totalsWrap);
 
       function updateTotals(){
-        const s=parseFloat(shipCost)||0;
+        const t=calcTotals();
         const svEl=document.getElementById('slip-shipping-val');
+        const stEl=document.getElementById('slip-subtotal-val');
+        const gvEl=document.getElementById('slip-gst-val');
         const tvEl=document.getElementById('slip-total-val');
-        if(svEl)svEl.textContent=fmt(s);
-        if(tvEl)tvEl.textContent=fmt(packetsTotal+s);
+        if(svEl)svEl.textContent=fmt(t.netShip);
+        if(stEl)stEl.textContent=fmt(t.subtotal);
+        if(gvEl)gvEl.textContent=fmt(t.gst);
+        if(tvEl)tvEl.textContent=fmt(t.total);
       }
 
       modal.append(body);
@@ -3011,12 +3033,12 @@ function openShipmentModal(filteredPackets){
         saving=true;shipBtn.textContent='Saving...';shipBtn.disabled=true;backBtn.disabled=true;
         try{
           const runId=gid();
-          const runData={id:runId,ship_date:shipDate,shipping_cost:cost,tracking_last4:trackLast4,retailer_id:firstPacket.retailer_id,sub_customer_name:subCust||null,created:todayISO()};
+          const runData={id:runId,ship_date:shipDate,shipping_cost:cost,tracking_last4:trackLast4,retailer_id:firstPacket.retailer_id,sub_customer_name:subCust||null,sub_customer_id:subCustId||null,created:todayISO()};
           if(isNJ&&invoiceNum)runData.invoice_number=invoiceNum;
           if(!isNJ&&psNumber)runData.packing_slip_number=psNumber;
           await sbInsert('shipping_runs',runData);
           if(isNJ&&invoiceNum){
-            try{await sbInsert('tax_invoices',{id:gid(),invoice_number:invoiceNum,shipping_run_id:runId,issue_date:shipDate,retailer_id:firstPacket.retailer_id,sub_customer_name:subCust||null,status:'active',created:todayISO()});}
+            try{await sbInsert('tax_invoices',{id:gid(),invoice_number:invoiceNum,shipping_run_id:runId,issue_date:shipDate,retailer_id:firstPacket.retailer_id,sub_customer_name:subCust||null,sub_customer_id:subCustId||null,status:'active',created:todayISO()});}
             catch(e2){console.warn('tax_invoices insert failed:',e2);}
           }
           for(const p of selectedPackets){await sbUpdate('packets',p.id,{shipping_run_id:runId});}
@@ -3074,9 +3096,9 @@ function renderTaxInvoices(){
   const filterRow=h('div',{style:{display:'flex',gap:'var(--space-4)',alignItems:'flex-end'}});
 
   const scSel=h('select',{className:'select',style:{width:'200px'}});
-  const allScNames=[...new Set((S.taxInvoices||[]).map(i=>i.sub_customer_name||'').filter(Boolean))].sort();
+  const allScIds=[...new Set((S.taxInvoices||[]).map(i=>i.sub_customer_id||'').filter(Boolean))].sort((a,b)=>scName(a).localeCompare(scName(b)));
   scSel.append(h('option',{value:''},'All sub-customers'));
-  allScNames.forEach(sc=>{const o=h('option',{value:sc},sc);if(S.taxInvoicesSubCustomer===sc)o.selected=true;scSel.append(o);});
+  allScIds.forEach(sc=>{const o=h('option',{value:sc},scName(sc));if(S.taxInvoicesSubCustomer===sc)o.selected=true;scSel.append(o);});
   scSel.addEventListener('change',e=>{S.taxInvoicesSubCustomer=e.target.value;render();});
   filterRow.append(fld('Sub-customer',scSel));
 
@@ -3111,7 +3133,7 @@ function renderTaxInvoices(){
   else if(sr.dateFrom&&sr.dateTo)dr={from:new Date(sr.dateFrom),to:new Date(sr.dateTo+'T23:59:59')};
 
   const invoices=(S.taxInvoices||[]).filter(inv=>{
-    if(S.taxInvoicesSubCustomer&&inv.sub_customer_name!==S.taxInvoicesSubCustomer)return false;
+    if(S.taxInvoicesSubCustomer&&inv.sub_customer_id!==S.taxInvoicesSubCustomer)return false;
     if(dr&&inv.issue_date){const d=new Date(inv.issue_date);if(d<dr.from||d>dr.to)return false;}
     return true;
   });
@@ -3153,14 +3175,14 @@ function renderTaxInvoices(){
 
     const reprintBtn=h('button',{className:'btn-link',style:{fontSize:'var(--text-xs)'}},'Reprint');
     reprintBtn.addEventListener('click',()=>{
-      try{printInvoice(runPackets,run?.retailer_id||0,inv.sub_customer_name||'',inv.invoice_number,inv.issue_date,run?.shipping_cost||0);}
+      try{printInvoice(runPackets,run?.retailer_id||0,scName(inv.sub_customer_id),inv.invoice_number,inv.issue_date,run?.shipping_cost||0,inv.sub_customer_id);}
       catch(e){console.warn(e);}
     });
 
     tbody.append(h('tr',{},
       h('td',{style:{fontFamily:'var(--font-mono)'}},inv.invoice_number||''),
       h('td',{},inv.issue_date||''),
-      h('td',{},inv.sub_customer_name||''),
+      h('td',{},scName(inv.sub_customer_id)),
       h('td',{style:{textAlign:'right'}},String(runPackets.length)),
       h('td',{style:{textAlign:'right'}},fmtMoney(total)),
       h('td',{},reprintBtn),
@@ -3243,22 +3265,24 @@ function renderShippingReport(){
   )));
   const tbody=h('tbody',{});
   let totalCost=0;
+  const cu=getCurrentUser();
+  const auditGstRate=cu.gst_registered?(cu.gst_rate||15)/100:0;
   const packetsByRunId=new Map();
   S.packets.forEach(p=>{if(p.shipping_run_id){if(!packetsByRunId.has(p.shipping_run_id))packetsByRunId.set(p.shipping_run_id,[]);packetsByRunId.get(p.shipping_run_id).push(p);}});
   const itemsByPacketId=new Map();
   S.allPacketItems.forEach(i=>{if(!itemsByPacketId.has(i.packet_id))itemsByPacketId.set(i.packet_id,[]);itemsByPacketId.get(i.packet_id).push(i);});
 
   filtered.forEach(run=>{
-    const retailer=S.retailers.find(r=>r.id===run.retailer_id);
-    const discountMult=1-((retailer?.discount_pct)||0)/100;
     const runPackets=packetsByRunId.get(run.id)||[];
-    const cost=parseFloat(run.shipping_cost)||0;
+    const shipping=parseFloat(run.shipping_cost)||0;
+    const appraisals=runPackets.reduce((s,p)=>{const items=itemsByPacketId.get(p.id)||[];return s+items.reduce((is,i)=>is+(parseFloat(i.cost)||0),0);},0);
+    const cost=(appraisals+shipping/1.15)*(1+auditGstRate);
     totalCost+=cost;
 
     // Build packet detail rows (hidden by default)
     const detailRows=runPackets.map(p=>{
       const items=itemsByPacketId.get(p.id)||[];
-      const amount=items.reduce((s,i)=>(s+(parseFloat(i.cost)||0)*discountMult),0);
+      const amount=items.reduce((s,i)=>(s+(parseFloat(i.cost)||0)),0);
       const dr=h('tr',{style:{display:'none',background:'var(--color-secondary)',fontSize:'var(--text-sm)'}});
       dr.append(
         h('td',{}),
@@ -3284,14 +3308,14 @@ function renderShippingReport(){
     reprintBtn.addEventListener('click',e=>{
       e.stopPropagation();
       const runPkts=S.packets.filter(p=>p.shipping_run_id===run.id);
-      if(isNJRun){try{printInvoice(runPkts,run.retailer_id,run.sub_customer_name||'',run.invoice_number,run.ship_date,run.shipping_cost);}catch(err){console.warn(err);}}
-      else{try{printPackingSlip(runPkts,run.retailer_id,run.sub_customer_name||'',run.ship_date,run.shipping_cost,run.packing_slip_number||null);}catch(err){console.warn(err);}}
+      if(isNJRun){try{printInvoice(runPkts,run.retailer_id,scName(run.sub_customer_id),run.invoice_number,run.ship_date,run.shipping_cost,run.sub_customer_id);}catch(err){console.warn(err);}}
+      else{try{printPackingSlip(runPkts,run.retailer_id,scName(run.sub_customer_id),run.ship_date,run.shipping_cost,run.packing_slip_number||null);}catch(err){console.warn(err);}}
     });
     const docRef=run.invoice_number||run.packing_slip_number||'';
     summaryRow.append(
       h('td',{},chevron),
       h('td',{},run.ship_date||''),
-      h('td',{},retailerName(run.retailer_id)+(run.sub_customer_name?' — '+run.sub_customer_name:'')),
+      h('td',{},retailerName(run.retailer_id)+(scName(run.sub_customer_id)?' — '+scName(run.sub_customer_id):'')),
       h('td',{style:{fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',color:'var(--color-muted-foreground)'}},docRef),
       h('td',{},run.tracking_last4?'…'+run.tracking_last4:''),
       h('td',{style:{textAlign:'right'}},String(runPackets.length)),
@@ -3340,7 +3364,7 @@ function renderFulfilmentReport(){
     totalCost+=cost;
     tbody.append(h('tr',{},
       h('td',{},run.ship_date||''),
-      h('td',{},retailerName(run.retailer_id)+(run.sub_customer_name?' — '+run.sub_customer_name:'')),
+      h('td',{},retailerName(run.retailer_id)+(scName(run.sub_customer_id)?' — '+scName(run.sub_customer_id):'')),
       h('td',{},run.tracking_last4?'…'+run.tracking_last4:''),
       h('td',{style:{textAlign:'right'}},String(pktCount)),
       h('td',{style:{textAlign:'right'}},fmtMoney(cost)),
