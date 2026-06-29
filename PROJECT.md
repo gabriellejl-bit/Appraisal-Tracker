@@ -49,6 +49,8 @@ Values: New (1), Hold from Billing (2), Billed (3), Archived (4 — hidden every
 
 WARNING: Never append `&select=*` to sbAll calls — sbAll already includes `?select=*`.
 
+**CRITICAL — never use text as a primary key or foreign key.** All IDs must be integers (auto-increment) or UUIDs. Text slugs (e.g. `sc_jewelcraft`) are display names only — never use them as PK/FK values. Text-based linking is fragile: a rename breaks every reference silently with no constraint error. Learned the hard way when `sub_customers` used text slugs as PKs and had to be migrated to integer FKs.
+
 ### items (lookup)
 `name TEXT PK, display_order INTEGER`
 WARNING: no id column. Sort: `&order=display_order.asc`

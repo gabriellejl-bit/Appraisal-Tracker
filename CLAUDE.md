@@ -91,7 +91,8 @@ Full project reference: `PROJECT.md` — read for DB schema, business rules, and
 14. **Map optimisations are function-local** — `itemsByPacketId`, `packetsByRunId` etc. are built inside render functions. Never reference them from separate top-level functions like `openShipmentModal`
 15. **GST on shipping** — shipping costs in `shipping_runs` are stored **GST-inclusive**. Always divide by 1.15 to get ex-GST for display. `getShippingForBilling()` pre-computes `totalExGST` and `bySubCustomerExGST` — use those instead of dividing at call sites
 16. **Duplicate declarations cause blank screen** — duplicate `const`/`function` in the same block scope (e.g. after a partial edit inside an `if(step===1){}` block) causes a SyntaxError where `S` is never defined and the app sticks on "Connecting…" with no console error. Always check for pre-existing declarations before adding new ones.
-17. **Invoice line items use FULL cost — no discount** — `discount_pct` is an internal billing split between Gabby and Paula; it is never deducted on customer-facing invoices or packing slips. Use raw `i.cost` (no `discountMult`) in `printInvoice`, `getPacketRows`, and the shipping audit cost column.
+17. **Never use text as a PK or FK** — all database IDs must be integers or UUIDs. Text slugs are for display only. Text-based linking breaks silently on rename with no constraint error.
+18. **Invoice line items use FULL cost — no discount** — `discount_pct` is an internal billing split between Gabby and Paula; it is never deducted on customer-facing invoices or packing slips. Use raw `i.cost` (no `discountMult`) in `printInvoice`, `getPacketRows`, and the shipping audit cost column.
 
 ## Shipping & Invoicing
 
