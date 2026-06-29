@@ -61,19 +61,21 @@ WARNING: no id column. Sort: `&order=display_order.asc`
 NJ sub-customers. Loaded into `S.subCustomers`. Address fields used in tax invoices.
 
 ### packets
-`id TEXT PK, date TEXT (DD MMM YYYY), retailer_id FK, customer_ref TEXT, sub_customer TEXT (nullable, NJ only), surname TEXT, status_id FK, paula_billed BOOLEAN, gabby_billed BOOLEAN, shipping_run_id FK (nullable), created/modified TEXT`
+`id TEXT PK, date TEXT (DD MMM YYYY), retailer_id FK, customer_ref TEXT, sub_customer_id FK→sub_customers.id (nullable, NJ only), surname TEXT, status_id FK, paula_billed BOOLEAN, gabby_billed BOOLEAN, shipping_run_id FK (nullable), created/modified TEXT`
+Legacy column `sub_customer TEXT` still exists but is not read by app code — use `sub_customer_id`.
 
 ### packet_items
 `id TEXT PK, packet_id FK, item TEXT, job_type_id FK, cost DECIMAL, paula_pct INTEGER, gabrielle_pct INTEGER (sum to 100)`
+`cost` is stored **ex-GST**. Never divide by 1.15. Use raw cost on customer invoices — do NOT apply `discount_pct`.
 
 ### shipping_runs
-`id TEXT PK, ship_date TEXT, shipping_cost DECIMAL (GST-INCLUSIVE), tracking_last4 TEXT, retailer_id FK, sub_customer_name TEXT (nullable), invoice_number TEXT (nullable, format INV-XXXX, NJ only, denormalized from tax_invoices), packing_slip_number TEXT (nullable, format PS-XXXX, Direct only), created TEXT`
+`id TEXT PK, ship_date TEXT, shipping_cost DECIMAL (GST-INCLUSIVE), tracking_last4 TEXT, retailer_id FK, sub_customer_id FK→sub_customers.id (nullable), sub_customer_name TEXT (nullable, legacy), invoice_number TEXT (nullable, INV-XXXX, NJ only), packing_slip_number TEXT (nullable, PS-XXXX, Direct only), created TEXT`
 
-**CRITICAL — shipping_cost is stored GST-inclusive.** Always divide by 1.15 to get ex-GST amount for billing display. `getShippingForBilling()` pre-computes `totalExGST` and `bySubCustomerExGST`.
+**CRITICAL — shipping_cost is stored GST-inclusive.** Divide by 1.15 for ex-GST display. Default input value is $6. `getShippingForBilling()` pre-computes `totalExGST` and `bySubCustomerExGST`.
 
 ### tax_invoices
-`id TEXT PK, invoice_number TEXT UNIQUE (INV-XXXX format), shipping_run_id FK, issue_date TEXT, retailer_id FK, sub_customer_name TEXT (nullable), status TEXT ('active'|'void'), created TEXT`
-NJ tax invoices as first-class entities. One record per NJ shipping run. `invoice_number` is also denormalized onto `shipping_runs` for fast display in the audit. Packets on an invoice are inferred via `packets.shipping_run_id`. Loaded into `S.taxInvoices`. `nextInvoiceNumber()` scans `S.taxInvoices` to find the max INV number.
+`id TEXT PK, invoice_number TEXT UNIQUE (INV-XXXX format), shipping_run_id FK, issue_date TEXT, retailer_id FK, sub_customer_id FK→sub_customers.id (nullable), sub_customer_name TEXT (nullable, legacy), status TEXT ('active'|'void'), created TEXT`
+One record per NJ shipping run. `invoice_number` also denormalized onto `shipping_runs` for fast display. Packets inferred via `packets.shipping_run_id`. Loaded into `S.taxInvoices`.
 
 ### billing_runs
 `id TEXT PK, run_date TEXT, user_name TEXT (slug), retailer_ids TEXT (csv), packet_ids TEXT (csv), status TEXT, created TEXT`
@@ -195,15 +197,16 @@ Flat list of all shipping runs with packet counts and costs.
 
 **Key helpers:**
 - `getCurrentUser()` — full user row, call once per function
+- `scName(id)` — resolves `sub_customers.id` → display name; use everywhere instead of raw `sub_customer_name`
 - `getDollarStats()` — `{unbilled, earnedWeek, earnedMonth}` POST-TAX, POST-DISCOUNT
-- `packetCosts(id)` — applies retailer `discount_pct`, returns `{total, paula, gabby}`
+- `packetCosts(id)` — applies retailer `discount_pct`, returns `{total, paula, gabby}` (billing use only — NOT for invoices)
 - `packetBillingLabel(pkt)`, `userHasBilled(pkt)`, `userHasNoWork(pktId)`
 - `getBillingItems()`, `isRetailerCombined(retailerId)`, `invoiceGroup(jtName)`
 - `buildInvoiceSummary(items, retailerId)` — returns `{byJobType, bySubCustomer, subtotal, gst, total, discountPct, isNJRetailer, isCombined, isCombinedGabby, isCombinedPaula}`
 - `getShippingForBilling(retailerId)` — returns `{total, totalExGST, bySubCustomer, bySubCustomerExGST, bySubCustomerRunCount, runs, runCount, dateLabel}`
 - `nextInvoiceNumber()` — returns next `INV-XXXX` string
 - `generatePDFContent(retailerId)` — text lines for detailed billing PDF
-- `renderBreadcrumb(section)`, `retailerName(id)`, `statusName(id)`, `fmtMoney(n)`, `fmtD(d)`, `getDateRange(key)`
+- `retailerName(id)`, `statusName(id)`, `fmtMoney(n)`, `fmtD(d)`, `getDateRange(key)`
 
 **IDs:** `Date.now().toString(36) + Math.random().toString(36).slice(2,7)` via `gid()`
 

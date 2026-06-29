@@ -90,6 +90,8 @@ Full project reference: `PROJECT.md` — read for DB schema, business rules, and
 13. **`replace_all` edits corrupt declaration lines** — never use `replace_all` to rename a variable; the declaration `const foo=foo` will be produced. Rename the declaration and usages separately
 14. **Map optimisations are function-local** — `itemsByPacketId`, `packetsByRunId` etc. are built inside render functions. Never reference them from separate top-level functions like `openShipmentModal`
 15. **GST on shipping** — shipping costs in `shipping_runs` are stored **GST-inclusive**. Always divide by 1.15 to get ex-GST for display. `getShippingForBilling()` pre-computes `totalExGST` and `bySubCustomerExGST` — use those instead of dividing at call sites
+16. **Duplicate declarations cause blank screen** — duplicate `const`/`function` in the same block scope (e.g. after a partial edit inside an `if(step===1){}` block) causes a SyntaxError where `S` is never defined and the app sticks on "Connecting…" with no console error. Always check for pre-existing declarations before adding new ones.
+17. **Invoice line items use FULL cost — no discount** — `discount_pct` is an internal billing split between Gabby and Paula; it is never deducted on customer-facing invoices or packing slips. Use raw `i.cost` (no `discountMult`) in `printInvoice`, `getPacketRows`, and the shipping audit cost column.
 
 ## Shipping & Invoicing
 
@@ -100,9 +102,13 @@ Full project reference: `PROJECT.md` — read for DB schema, business rules, and
 
 **`nextInvoiceNumber()`** — scans `S.shippingRuns` for existing `INV-XXXX` numbers, returns next padded string.
 
-**`openShipmentModal(filteredPackets)`** — two-step modal. Step 1: packet table + shipping cost. Step 2: date + tracking + confirm. NJ sub-customers get "Print Invoice" (tax invoice PDF) instead of "Print Packing Slip". Invoice number generated on first print, saved to `shipping_runs.invoice_number` on confirm.
+**`scName(id)`** — resolves a `sub_customers.id` value to a display name. Always use this for display; never use the denormalized `sub_customer_name` field for display logic.
 
-**Tax invoice (NJ only):** Title "TAX INVOICE", To = sub-customer + address, From = PGL Appraisals 34 Tarbert Street Alexandra 9320. GST rate from `getCurrentUser().gst_rate`. Shipping displayed ex-GST (stored ÷ 1.15).
+**`openShipmentModal(filteredPackets)`** — two-step modal. Step 1: packet table + shipping cost input (default $6, stored GST-inclusive). Step 2: date + tracking + confirm. NJ sub-customers get "Print Invoice" instead of "Print Packing Slip".
+
+**Step 1 modal summary format:** packet rows at full cost (no discount) → Shipping (net, input÷1.15) → Subtotal → GST (if user is GST-registered) → Total. The shipping input is gross (GST-inclusive); only shipping is divided by 1.15, not appraisals.
+
+**Tax invoice (NJ only):** Title "TAX INVOICE", To = sub-customer + address, From = PGL Appraisals 34 Tarbert Street Alexandra 9320. Line items at full cost (no discount). Shipping ex-GST (stored ÷ 1.15). GST on full subtotal. `printInvoice()` — do NOT apply `discountMult` to row amounts.
 
 **Billing Step 2 modal — NJ format:** One "Valuations - [sub-customer] - [date]" line + one "Shipping - [sub-customer] - [date] (N)" line per sub-customer. No job-type breakdown. Subtotal → discount → shipping total (ex-GST) → GST → Total.
 
@@ -145,4 +151,6 @@ Full project reference: `PROJECT.md` — read for DB schema, business rules, and
 - [ ] All `ic()` references exist in `I` object
 - [ ] No `&select=*` appended to `sbAll` queries
 - [ ] Map optimisations not leaked into other function scopes
+- [ ] No duplicate `const`/`function` declarations in the same block scope
+- [ ] Invoice/packing slip line items use raw `i.cost` — no `discountMult`
 - [ ] Tested in browser against dev Supabase before reporting done
