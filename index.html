@@ -810,8 +810,12 @@ function renderRecords(){
   )));
   const tb=h('tbody',{});
   for(const r of filtered){
-    const costs=packetCosts(r.id);
-    const cv=f.user==='paula'?costs.paula:f.user==='gabby'?costs.gabby:costs.total;
+    const ritems=S.allPacketItems.filter(i=>i.packet_id===r.id);
+    const cv=f.user==='paula'
+      ?ritems.reduce((s,i)=>s+(parseFloat(i.cost)||0)*(i.paula_pct||0)/100,0)
+      :f.user==='gabby'
+      ?ritems.reduce((s,i)=>s+(parseFloat(i.cost)||0)*(i.gabrielle_pct||0)/100,0)
+      :ritems.reduce((s,i)=>s+(parseFloat(i.cost)||0),0);
     const cb=h('input',{type:'checkbox'});cb.checked=S.selectedPacketIds.has(r.id);
     cb.addEventListener('change',()=>{S.selectedPacketIds[cb.checked?'add':'delete'](r.id);render();});
     cb.addEventListener('click',e=>e.stopPropagation());
