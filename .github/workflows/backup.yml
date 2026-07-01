@@ -30,7 +30,7 @@ jobs:
           DATABASE_URL: ${{ secrets.SUPABASE_PROD_DB_URL }}
         run: |
           TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-          pg_dump "$DATABASE_URL" > "backups/backup_${TIMESTAMP}.sql"
+          /usr/lib/postgresql/17/bin/pg_dump "$DATABASE_URL" > "backups/backup_${TIMESTAMP}.sql"
 
       - name: Commit and push the backup file
         run: |
