@@ -24,6 +24,11 @@ const SB_URL='https://ytmyfarsptkezxkgpcbo.supabase.co';
 const SB_KEY='sb_publishable_2POAMJdA5U1FPSgxzDy1oA_EfCnF6I2';
 const supabaseAuth=supabase.createClient(SB_URL,SB_KEY);
 
+// Detect invite/recovery links before Supabase's client strips the tokens from the URL.
+// Format varies (hash fragment for implicit flow, query string for PKCE) so check both.
+const _authLinkParams=new URLSearchParams(window.location.hash.replace(/^#/,'')+'&'+window.location.search.replace(/^\?/,''));
+const _authLinkType=_authLinkParams.get('type'); // 'invite' | 'recovery' | 'signup' | 'magiclink' | null
+
 const hdrs=()=>({'apikey':SB_KEY,'Authorization':'Bearer '+(S.session&&S.session.access_token?S.session.access_token:SB_KEY),'Content-Type':'application/json','Prefer':'return=representation'});
 
 async function sb(table,method,body,q){
@@ -78,6 +83,9 @@ let S={
   currentUser:null,  // full user row from users table
   session:null,      // Supabase Auth session (null = signed out)
   profile:null,      // row from public.profiles matching the logged-in auth id (id, full_name, appraiser_id)
+  authView:'login',  // 'login' | 'forgotPassword' -- which form renders on the pre-session auth page
+  authMode:(_authLinkType==='invite'||_authLinkType==='recovery')?'setPassword':null, // overrides both the login page and the app while set
+  authModeReason:_authLinkType==='invite'?'invite':(_authLinkType==='recovery'?'recovery':null),
   searchCursorPos:0,  // track cursor position in search input for focus restoration
   searchHadFocus:false  // only restore focus if it had focus before render
 };
@@ -482,19 +490,29 @@ function ic(n){return h('span',{htmlContent:I[n],style:{display:'inline-flex',al
 function fld(lbl,el,wStyle){return h('div',{style:Object.assign({display:'flex',flexDirection:'column',gap:'var(--space-2)'},wStyle||{})},h('label',{className:'label label-compact'},lbl),el);}
 
 //
-// AUTH (Sign in) -- internal staff tool: no public sign-up.
-// Accounts are created directly in the Supabase dashboard (Authentication > Users).
+// AUTH (Sign in / forgot password / set password) -- internal staff tool: no public sign-up.
+// Accounts are created directly in the Supabase dashboard (Authentication > Users) --
+// either via "Invite user" (lands on renderSetPasswordPage) or by setting a password
+// directly (lands on renderAuthPage's login form).
 //
-function renderAuthPage(){
+function authCardShell(titleText,descText){
   const wrap=h('div',{style:{minHeight:'calc(100vh - 16px)',display:'flex',alignItems:'center',justifyContent:'center'}});
   const card=h('div',{className:'card',style:{width:'100%',maxWidth:'400px',border:'none'}});
-
   card.append(h('div',{className:'card__header',style:{alignItems:'center',textAlign:'center'}},
     h('div',{style:{display:'flex',justifyContent:'center',marginBottom:'var(--space-2)'}},h('img',{src:'assets/images/logo.svg',style:{height:'40px'}})),
-    h('h3',{className:'card__title'},'Sign in'),
-    h('p',{className:'card__description'},'Enter your email and password to continue')
+    h('h3',{className:'card__title'},titleText),
+    h('p',{className:'card__description'},descText)
   ));
+  wrap.append(card);
+  return{wrap,card};
+}
 
+function renderAuthPage(){
+  return S.authView==='forgotPassword'?renderForgotPasswordPage():renderLoginPage();
+}
+
+function renderLoginPage(){
+  const{wrap,card}=authCardShell('Sign in','Enter your email and password to continue');
   const content=h('div',{className:'card__content'});
   const form=h('form',{style:{display:'flex',flexDirection:'column',gap:'var(--space-4)'}});
 
@@ -508,6 +526,9 @@ function renderAuthPage(){
   const pwInput=h('input',{className:'input',type:'password',autocomplete:'current-password',placeholder:'Password'});
   const pwError=h('div',{className:'error-text'});
   form.append(fld('Password',pwInput),pwError);
+
+  const forgotLink=h('button',{type:'button',className:'btn-link',style:{fontSize:'var(--text-sm)',alignSelf:'flex-end',padding:'0'},onClick:()=>{S.authView='forgotPassword';render();}},'Forgot password?');
+  form.append(forgotLink);
 
   const formError=h('div',{className:'error-text',style:{textAlign:'center'}});
   form.append(formError);
@@ -547,8 +568,139 @@ function renderAuthPage(){
 
   content.append(form);
   card.append(content);
+  return wrap;
+}
 
-  wrap.append(card);
+function renderForgotPasswordPage(){
+  const{wrap,card}=authCardShell('Reset password',"Enter your email and we'll send you a reset link");
+  const content=h('div',{className:'card__content'});
+  const form=h('form',{style:{display:'flex',flexDirection:'column',gap:'var(--space-4)'}});
+
+  const clearFieldError=(input,errEl)=>{input.classList.remove('error');errEl.style.display='none';};
+  const showFieldError=(input,errEl,msg)=>{input.classList.add('error');errEl.textContent=msg;errEl.style.display='block';};
+
+  const emailInput=h('input',{className:'input',type:'email',autocomplete:'email',placeholder:'you@example.com'});
+  const emailError=h('div',{className:'error-text'});
+  form.append(fld('Email',emailInput),emailError);
+  emailInput.addEventListener('input',()=>clearFieldError(emailInput,emailError));
+
+  const formMsg=h('div',{className:'error-text',style:{textAlign:'center'}});
+  form.append(formMsg);
+  const showFormMsg=(msg,isError)=>{formMsg.style.color=isError?'var(--color-destructive)':'var(--color-muted-foreground)';formMsg.textContent=msg;formMsg.style.display='block';};
+
+  const submitBtn=h('button',{type:'submit',className:'btn btn-primary',style:{width:'100%',justifyContent:'center'}},'Send Reset Link');
+  form.append(submitBtn);
+
+  form.addEventListener('submit',async(e)=>{
+    e.preventDefault();
+    formMsg.style.display='none';
+    const email=emailInput.value.trim();
+    if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){showFieldError(emailInput,emailError,'Enter a valid email address');return;}
+    clearFieldError(emailInput,emailError);
+
+    submitBtn.disabled=true;
+    submitBtn.textContent='Sending...';
+    try{
+      const{error}=await supabaseAuth.auth.resetPasswordForEmail(email,{redirectTo:window.location.origin+window.location.pathname});
+      if(error)throw error;
+      submitBtn.textContent='Link Sent';
+      form.querySelectorAll('input').forEach(i=>i.disabled=true);
+      // Generic message regardless of whether the account exists -- Supabase itself
+      // doesn't reveal that either, so neither should we.
+      showFormMsg('If an account exists for that email, a reset link has been sent.',false);
+    }catch(err){
+      submitBtn.disabled=false;
+      submitBtn.textContent='Send Reset Link';
+      showFormMsg('Something went wrong. Please try again.',true);
+    }
+  });
+
+  content.append(form);
+  card.append(content);
+  card.append(h('div',{className:'card__footer',style:{justifyContent:'center'}},
+    h('button',{type:'button',className:'btn btn-link',onClick:()=>{S.authView='login';render();}},'Back to sign in')
+  ));
+  return wrap;
+}
+
+// Landing screen for both invite-acceptance and password-recovery links -- Supabase signs
+// the user in automatically when they click either link, so this always shows ahead of the
+// app itself (see the S.authMode check in render()) until they set a password.
+function renderSetPasswordPage(){
+  const isInvite=S.authModeReason==='invite';
+
+  if(!S.session){
+    const{wrap,card}=authCardShell('Link expired','This invite or reset link is invalid or has already been used.');
+    card.append(h('div',{className:'card__footer',style:{justifyContent:'center'}},
+      h('button',{type:'button',className:'btn btn-primary',style:{width:'100%',justifyContent:'center'},onClick:()=>{S.authMode=null;S.authModeReason=null;render();}},'Back to sign in')
+    ));
+    return wrap;
+  }
+
+  const{wrap,card}=authCardShell(
+    isInvite?'Welcome':'Choose a new password',
+    isInvite?'Set a password to finish creating your account':'Enter a new password for your account'
+  );
+  const content=h('div',{className:'card__content'});
+  const form=h('form',{style:{display:'flex',flexDirection:'column',gap:'var(--space-4)'}});
+
+  const clearFieldError=(input,errEl)=>{input.classList.remove('error');errEl.style.display='none';};
+  const showFieldError=(input,errEl,msg)=>{input.classList.add('error');errEl.textContent=msg;errEl.style.display='block';};
+
+  const pwInput=h('input',{className:'input',type:'password',autocomplete:'new-password',placeholder:'New password'});
+  const pwError=h('div',{className:'error-text'});
+  form.append(fld('New Password',pwInput),pwError);
+
+  const confirmInput=h('input',{className:'input',type:'password',autocomplete:'new-password',placeholder:'Confirm new password'});
+  const confirmError=h('div',{className:'error-text'});
+  form.append(fld('Confirm Password',confirmInput),confirmError);
+
+  const formError=h('div',{className:'error-text',style:{textAlign:'center'}});
+  form.append(formError);
+  const showFormError=(msg)=>{formError.textContent=msg;formError.style.display='block';};
+  const clearFormError=()=>{formError.style.display='none';};
+
+  [[pwInput,pwError],[confirmInput,confirmError]].forEach(([inp,errEl])=>{
+    inp.addEventListener('input',()=>{clearFieldError(inp,errEl);clearFormError();});
+  });
+
+  const submitBtn=h('button',{type:'submit',className:'btn btn-primary',style:{width:'100%',justifyContent:'center'}},isInvite?'Set Password':'Update Password');
+  form.append(submitBtn);
+
+  form.addEventListener('submit',async(e)=>{
+    e.preventDefault();
+    clearFormError();
+    const password=pwInput.value;
+    let valid=true;
+    if(!password||password.length<6){showFieldError(pwInput,pwError,'Password must be at least 6 characters');valid=false;}
+    if(confirmInput.value!==password){showFieldError(confirmInput,confirmError,'Passwords do not match');valid=false;}
+    if(!valid)return;
+
+    submitBtn.disabled=true;
+    submitBtn.textContent=isInvite?'Setting password...':'Updating...';
+    try{
+      const{error}=await supabaseAuth.auth.updateUser({password});
+      if(error)throw error;
+      S.authMode=null;S.authModeReason=null;
+      S.ready=false;render();
+      loadAll().then(()=>{applyAppraiserDefault();S.ready=true;render();})
+        .catch(err=>{S.ready=true;showToast('Failed to load data: '+err.message,true);render();});
+    }catch(err){
+      submitBtn.disabled=false;
+      submitBtn.textContent=isInvite?'Set Password':'Update Password';
+      // This link is already tied to a specific account, so a more specific message is fine
+      // here -- unlike the login/forgot-password forms, there's no enumeration risk.
+      // Match on the SDK's own error text rather than S.session -- the session can look
+      // present in app state while the client's internal session is what actually failed.
+      showFormError(err.message==='Auth session missing!'?'This link has expired or already been used. Request a new one and try again.':(err.message||'Something went wrong. Please try again.'));
+    }
+  });
+
+  content.append(form);
+  card.append(content);
+  card.append(h('div',{className:'card__footer',style:{justifyContent:'center'}},
+    h('button',{type:'button',className:'btn btn-link',onClick:()=>{S.authMode=null;S.authModeReason=null;supabaseAuth.auth.signOut();}},'Cancel')
+  ));
   return wrap;
 }
 
@@ -3494,6 +3646,7 @@ function renderFulfilmentReport(){
 function render(){
   const app=document.getElementById('app');app.innerHTML='';
   if(!S.ready){app.innerHTML='<div class="loading-screen"><div class="spinner"></div><div class="loading-text">Connecting...</div></div>';return;}
+  if(S.authMode==='setPassword'){app.append(renderSetPasswordPage());return;}
   if(!S.session){app.append(renderAuthPage());return;}
   if(S.toast)app.append(h('div',{className:'toast'+(S.toast.w?' warn':'')},S.toast.m));
   const {sidenav,topbar}=renderNav();
@@ -3555,7 +3708,7 @@ function clearLoadedData(){
   S.packets=[];S.allPacketItems=[];S.items=[];S.retailers=[];S.jobTypes=[];S.billingStatuses=[];
   S.billingRuns=[];S.users=[];S.subCustomers=[];S.shippingRuns=[];S.taxInvoices=[];
   S.profile=null;
-  S.view='home';S.editId=null;
+  S.view='home';S.editId=null;S.authView='login';
 }
 
 (async()=>{
@@ -3574,6 +3727,10 @@ function clearLoadedData(){
         .catch(e=>{S.ready=true;showToast('Failed to load data: '+e.message,true);render();});
     }else if(event==='SIGNED_OUT'){
       clearLoadedData();S.ready=true;render();
+    }else if(event==='PASSWORD_RECOVERY'){
+      // Belt-and-suspenders: the URL-based check at boot usually catches this already,
+      // but the recovery link format can vary, so also react to the event itself.
+      S.authMode='setPassword';S.authModeReason='recovery';render();
     }
     // TOKEN_REFRESHED / USER_UPDATED: session is updated above but we deliberately
     // skip render() here so an in-progress Work Packet form draft isn't wiped.
