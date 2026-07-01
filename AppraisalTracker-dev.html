@@ -6,11 +6,12 @@
 <title>Billing Tracker [DEV]</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800;900&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="design-system/tokens/tokens-html.css?v=11">
 <link rel="stylesheet" href="design-system/components/html/components.css?v=9">
 <link rel="stylesheet" href="styles.css?v=10">
-<link rel="stylesheet" href="style-new.css?v=34">
+<link rel="stylesheet" href="style-new.css?v=35">
 </head>
 <body>
 <div id="app"><div class="loading-screen"><div class="spinner"></div><div class="loading-text">Connecting...</div></div></div>
@@ -21,8 +22,9 @@
 //
 const SB_URL='https://xwripwrfqdddfomzfjaq.supabase.co';
 const SB_KEY='sb_publishable_FktRKmVGhdS5SzeJ7g6phQ_n9m4iDcm';
+const supabaseAuth=supabase.createClient(SB_URL,SB_KEY);
 
-const hdrs=()=>({'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json','Prefer':'return=representation'});
+const hdrs=()=>({'apikey':SB_KEY,'Authorization':'Bearer '+(S.session&&S.session.access_token?S.session.access_token:SB_KEY),'Content-Type':'application/json','Prefer':'return=representation'});
 
 async function sb(table,method,body,q){
   const r=await fetch(SB_URL+'/rest/v1/'+table+(q||''),{method,headers:hdrs(),...(body?{body:JSON.stringify(body)}:{})});
@@ -74,6 +76,8 @@ let S={
   taxInvoicesReport:{dateRange:'thisfy',dateFrom:'',dateTo:''},
   toast:null,tt:null,ready:false,online:true,user:'gabby',
   currentUser:null,  // full user row from users table
+  session:null,      // Supabase Auth session (null = signed out)
+  profile:null,      // row from public.profiles matching the logged-in auth id (id, full_name, appraiser_id)
   searchCursorPos:0,  // track cursor position in search input for focus restoration
   searchHadFocus:false  // only restore focus if it had focus before render
 };
@@ -250,6 +254,25 @@ async function loadAll(){
   catch(e){console.warn('shipping_runs load failed:',e);S.shippingRuns=[];}
   try{S.taxInvoices=await sbAll('tax_invoices','&order=created.desc')||[];}
   catch(e){console.warn('tax_invoices load failed:',e);S.taxInvoices=[];}
+  // Logged-in account's display profile -- id matches auth.users.id, not tied to the G/P work-attribution toggle
+  try{
+    const rows=await sbAll('profiles','&id=eq.'+S.session.user.id);
+    S.profile=(rows&&rows[0])||null;
+  }catch(e){console.warn('profile load failed:',e);S.profile=null;}
+}
+
+// Defaults the G/P work-attribution toggle to whichever appraiser the logged-in account
+// maps to via profiles.appraiser_id. Runs once per login/session-restore -- the toggle
+// buttons still let either user switch the view manually afterwards.
+// Unmapped or unrecognised accounts default to Gabby for now; a proper Admin view for
+// non-appraiser logins is planned separately.
+function applyAppraiserDefault(){
+  let slug='gabby';
+  if(S.profile&&S.profile.appraiser_id!=null){
+    const appraiser=S.users.find(u=>u.id===S.profile.appraiser_id);
+    if(appraiser&&appraiser.slug)slug=appraiser.slug;
+  }
+  S.user=slug;
 }
 
 // Helper to get the full user object for the current user slug
@@ -459,14 +482,90 @@ function ic(n){return h('span',{htmlContent:I[n],style:{display:'inline-flex',al
 function fld(lbl,el,wStyle){return h('div',{style:Object.assign({display:'flex',flexDirection:'column',gap:'var(--space-2)'},wStyle||{})},h('label',{className:'label label-compact'},lbl),el);}
 
 //
+// AUTH (Sign in) -- internal staff tool: no public sign-up.
+// Accounts are created directly in the Supabase dashboard (Authentication > Users).
+//
+function renderAuthPage(){
+  const wrap=h('div',{style:{minHeight:'calc(100vh - 16px)',display:'flex',alignItems:'center',justifyContent:'center'}});
+  const card=h('div',{className:'card',style:{width:'100%',maxWidth:'400px',border:'none'}});
+
+  card.append(h('div',{className:'card__header',style:{alignItems:'center',textAlign:'center'}},
+    h('div',{style:{display:'flex',justifyContent:'center',marginBottom:'var(--space-2)'}},h('img',{src:'assets/images/logo.svg',style:{height:'40px'}})),
+    h('h3',{className:'card__title'},'Sign in'),
+    h('p',{className:'card__description'},'Enter your email and password to continue')
+  ));
+
+  const content=h('div',{className:'card__content'});
+  const form=h('form',{style:{display:'flex',flexDirection:'column',gap:'var(--space-4)'}});
+
+  const clearFieldError=(input,errEl)=>{input.classList.remove('error');errEl.style.display='none';};
+  const showFieldError=(input,errEl,msg)=>{input.classList.add('error');errEl.textContent=msg;errEl.style.display='block';};
+
+  const emailInput=h('input',{className:'input',type:'email',autocomplete:'email',placeholder:'you@example.com'});
+  const emailError=h('div',{className:'error-text'});
+  form.append(fld('Email',emailInput),emailError);
+
+  const pwInput=h('input',{className:'input',type:'password',autocomplete:'current-password',placeholder:'Password'});
+  const pwError=h('div',{className:'error-text'});
+  form.append(fld('Password',pwInput),pwError);
+
+  const formError=h('div',{className:'error-text',style:{textAlign:'center'}});
+  form.append(formError);
+  const showFormError=(msg)=>{formError.textContent=msg;formError.style.display='block';};
+  const clearFormError=()=>{formError.style.display='none';};
+
+  [[emailInput,emailError],[pwInput,pwError]].forEach(([inp,errEl])=>{
+    inp.addEventListener('input',()=>{clearFieldError(inp,errEl);clearFormError();});
+  });
+
+  const submitBtn=h('button',{type:'submit',className:'btn btn-primary',style:{width:'100%',justifyContent:'center'}},'Sign In');
+  form.append(submitBtn);
+
+  form.addEventListener('submit',async(e)=>{
+    e.preventDefault();
+    clearFormError();
+    const email=emailInput.value.trim();
+    const password=pwInput.value;
+    let valid=true;
+    if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){showFieldError(emailInput,emailError,'Enter a valid email address');valid=false;}
+    if(!password){showFieldError(pwInput,pwError,'Enter your password');valid=false;}
+    if(!valid)return;
+
+    submitBtn.disabled=true;
+    submitBtn.textContent='Signing in...';
+    try{
+      const{error}=await supabaseAuth.auth.signInWithPassword({email,password});
+      if(error)throw error;
+      // onAuthStateChange picks up the SIGNED_IN event and loads the app.
+    }catch(err){
+      submitBtn.disabled=false;
+      submitBtn.textContent='Sign In';
+      // Generic message -- never reveal whether the account exists, is unconfirmed, etc.
+      showFormError('Invalid email or password');
+    }
+  });
+
+  content.append(form);
+  card.append(content);
+
+  wrap.append(card);
+  return wrap;
+}
+
+//
 // NAV
 //
 function renderNav(){
   const users=S.users.length?S.users:[{name:'Gabby',slug:'gabby',colour:'#5C7A6B'},{name:'Paula',slug:'paula',colour:'#6E4B5E'}];
   const toggleBtns=h('div',{className:'user-toggle-buttons'});
+  // Identity of the logged-in account -- independent of the G/P work-attribution toggle below.
+  // Real display name comes from public.profiles.full_name (matched on auth id in loadAll());
+  // falls back to email alone if no profiles row exists yet for this account.
+  const sessionUser=S.session&&S.session.user;
+  const fullName=S.profile&&S.profile.full_name;
   const userInfo=h('div',{className:'user-info'},
-    h('div',{className:'user-name'},'FirstName Surname'),
-    h('div',{className:'user-email'},'user@jamies.co.nz')
+    h('div',{className:'user-name'},fullName||(sessionUser?sessionUser.email:'')),
+    h('div',{className:'user-email'},fullName&&sessionUser?sessionUser.email:'')
   );
   users.filter(u=>u.active!==false).forEach(u=>{
     const isActive=S.user===u.slug;
@@ -513,7 +612,12 @@ function renderNav(){
   const adminLink=h('button',{className:'nav-link'+(S.view==='admin'?' active':'')},ic('nav_settings_u'),'Admin');
   adminLink.addEventListener('click',()=>{S.view='admin';render();});
   generalSection.append(adminLink);
-  generalSection.append(h('button',{className:'nav-link disabled'},ic('nav_logout_u'),'Logout'));
+  const logoutBtn=h('button',{className:'nav-link',onClick:async()=>{
+    logoutBtn.disabled=true;
+    try{await supabaseAuth.auth.signOut();}
+    catch(e){logoutBtn.disabled=false;showToast('Sign out failed: '+e.message,true);}
+  }},ic('nav_logout_u'),'Logout');
+  generalSection.append(logoutBtn);
   sidenav.append(generalSection);
 
   const statusCard=h('div',{className:'sidenav-bottom'},
@@ -3390,6 +3494,7 @@ function renderFulfilmentReport(){
 function render(){
   const app=document.getElementById('app');app.innerHTML='';
   if(!S.ready){app.innerHTML='<div class="loading-screen"><div class="spinner"></div><div class="loading-text">Connecting...</div></div>';return;}
+  if(!S.session){app.append(renderAuthPage());return;}
   if(S.toast)app.append(h('div',{className:'toast'+(S.toast.w?' warn':'')},S.toast.m));
   const {sidenav,topbar}=renderNav();
   const shell=h('div',{className:'app-shell'});
@@ -3444,9 +3549,35 @@ async function renderAsync(){
 // Override the nav link clicks and edit buttons to use renderAsync
 // (render() itself remains synchronous for all non-edit views)
 
+// Clears data loaded under the previous session so it can't leak to whoever signs in next
+// on a shared machine (Gabby / Paula may share a browser profile).
+function clearLoadedData(){
+  S.packets=[];S.allPacketItems=[];S.items=[];S.retailers=[];S.jobTypes=[];S.billingStatuses=[];
+  S.billingRuns=[];S.users=[];S.subCustomers=[];S.shippingRuns=[];S.taxInvoices=[];
+  S.profile=null;
+  S.view='home';S.editId=null;
+}
+
 (async()=>{
-  try{await loadAll();S.ready=true;render();}
-  catch(e){document.getElementById('app').innerHTML='<div class="loading-screen"><div class="loading-text" style="color:#B85C38;">Connection failed: '+e.message+'<br><br>Check your internet and refresh.</div></div>';}
+  try{
+    const{data:{session}}=await supabaseAuth.auth.getSession();
+    S.session=session;
+    if(session){await loadAll();applyAppraiserDefault();}
+    S.ready=true;render();
+  }catch(e){document.getElementById('app').innerHTML='<div class="loading-screen"><div class="loading-text" style="color:#B85C38;">Connection failed: '+e.message+'<br><br>Check your internet and refresh.</div></div>';}
+
+  supabaseAuth.auth.onAuthStateChange((event,session)=>{
+    S.session=session;
+    if(event==='SIGNED_IN'){
+      S.ready=false;render();
+      loadAll().then(()=>{applyAppraiserDefault();S.ready=true;render();})
+        .catch(e=>{S.ready=true;showToast('Failed to load data: '+e.message,true);render();});
+    }else if(event==='SIGNED_OUT'){
+      clearLoadedData();S.ready=true;render();
+    }
+    // TOKEN_REFRESHED / USER_UPDATED: session is updated above but we deliberately
+    // skip render() here so an in-progress Work Packet form draft isn't wiped.
+  });
 })();
 </script>
 </body>

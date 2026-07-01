@@ -93,7 +93,8 @@ Full project reference: `PROJECT.md` — read for DB schema, business rules, and
 16. **Duplicate declarations cause blank screen** — duplicate `const`/`function` in the same block scope (e.g. after a partial edit inside an `if(step===1){}` block) causes a SyntaxError where `S` is never defined and the app sticks on "Connecting…" with no console error. Always check for pre-existing declarations before adding new ones.
 17. **Records page Total column shows raw cost — no discount** — `discount_pct` is never applied to the Records table display. Use raw `i.cost` (no `discountMult`), split by `paula_pct`/`gabrielle_pct` for per-user views. `packetCosts()` applies discount and is for billing calculations only — never use it for display in Records.
 18. **Never use text as a PK or FK** — all database IDs must be integers or UUIDs. Text slugs are for display only. Text-based linking breaks silently on rename with no constraint error.
-18. **Invoice line items use FULL cost — no discount** — `discount_pct` is an internal billing split between Gabby and Paula; it is never deducted on customer-facing invoices or packing slips. Use raw `i.cost` (no `discountMult`) in `printInvoice`, `getPacketRows`, and the shipping audit cost column.
+19. **Invoice line items use FULL cost — no discount** — `discount_pct` is an internal billing split between Gabby and Paula; it is never deducted on customer-facing invoices or packing slips. Use raw `i.cost` (no `discountMult`) in `printInvoice`, `getPacketRows`, and the shipping audit cost column.
+20. **`S.user` (G/P toggle) is not login identity — never conflate them.** `S.user`/`getCurrentUser()` drive business logic (dashboard stats, GST, invoicing) and switch freely when the avatars are clicked. `S.session`/`S.profile` reflect who is actually authenticated and must never change on toggle clicks. This was a real bug: the header briefly showed the toggle's name instead of the logged-in account. See "Authentication" in `PROJECT.md`.
 
 ## Shipping & Invoicing
 
@@ -115,6 +116,18 @@ Full project reference: `PROJECT.md` — read for DB schema, business rules, and
 **Billing Step 2 modal — NJ format:** One "Valuations - [sub-customer] - [date]" line + one "Shipping - [sub-customer] - [date] (N)" line per sub-customer. No job-type breakdown. Subtotal → discount → shipping total (ex-GST) → GST → Total.
 
 **PDF detailed report — NJ:** Groups items by shipping run. Each run labelled `Invoice: INV-XXXX YYYY-MM-DD (tracking ...XXXX)`. Falls back to `Shipment:` for runs without an invoice number.
+
+## Authentication
+
+Internal staff tool — **sign-in only, no public sign-up**. Accounts are created directly in the Supabase dashboard (Authentication > Users), not through the app. Full detail in `PROJECT.md` under "Authentication"; quick reference for editing this code:
+
+- `renderAuthPage()` is the only auth UI — a single login form. Do not add a sign-up form back in without being asked.
+- `render()` gates on `S.session` at the very top — if you add a new view, it's automatically protected; there's no per-route auth check to remember.
+- Sign-in errors always show the generic "Invalid email or password" — never surface the raw Supabase error message on the login form (it can leak whether an account exists or is unconfirmed).
+- `onAuthStateChange` only calls `render()` for `SIGNED_IN`/`SIGNED_OUT`. `TOKEN_REFRESHED`/`USER_UPDATED` update `S.session` silently — **do not add a `render()` call there**, it would wipe an in-progress Work Packet form draft on a background token refresh.
+- `hdrs()` sends `S.session.access_token` when signed in, falling back to the anon `SB_KEY` only when signed out. Don't hardcode `SB_KEY` in new fetch calls — always go through `hdrs()`/`sbAll`/etc.
+- `S.user` (G/P toggle) is **not** login identity — see rule 20 above. `S.profile` (from `public.profiles`, RLS-protected, one row per logged-in account) is the real identity; it's separate from `S.users` (the Gabby/Paula business rows the toggle switches between).
+- `applyAppraiserDefault()` runs once after `loadAll()` on login/session-restore, defaulting `S.user` from `S.profile.appraiser_id`. It never runs on every render, so it won't fight a manual toggle click mid-session.
 
 ## Design System & Styling
 
@@ -155,4 +168,6 @@ Full project reference: `PROJECT.md` — read for DB schema, business rules, and
 - [ ] Map optimisations not leaked into other function scopes
 - [ ] No duplicate `const`/`function` declarations in the same block scope
 - [ ] Invoice/packing slip line items use raw `i.cost` — no `discountMult`
+- [ ] `S.user` (G/P toggle) not conflated with login identity (`S.session`/`S.profile`)
+- [ ] No `render()` added inside `onAuthStateChange` for `TOKEN_REFRESHED`/`USER_UPDATED`
 - [ ] Tested in browser against dev Supabase before reporting done
