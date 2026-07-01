@@ -39,6 +39,16 @@ Internal staff tool — **no public sign-up**. Staff accounts are created direct
 - **Logout** — sidenav "Logout" button calls `supabaseAuth.auth.signOut()`.
 - **Authenticated REST calls** — `hdrs()` sends `S.session.access_token` as the bearer token when a session exists, falling back to the anon `SB_KEY` only when signed out (i.e. only for the unauthenticated login page, which makes no data calls).
 
+### Password creation and reset
+
+Staff accounts are still created in the Supabase dashboard (Authentication > Users), but two client-side flows connect to that:
+
+- **Send Invitation (dashboard-triggered)** — inviting a user is an admin-only action done from the dashboard (it needs the service-role key, which the app never has — this is a static site with no backend, so that key can't live in client code). The app only handles the *landing* side: Supabase's invite email links back to the app with the user already signed in; `renderSetPasswordPage()` (reason `'invite'`) shows a "Welcome — set a password to finish creating your account" form, calling `supabaseAuth.auth.updateUser({password})`.
+- **Forgot password (self-service, fully client-side)** — a "Forgot password?" link on the login page (`S.authView='forgotPassword'`) calls `supabaseAuth.auth.resetPasswordForEmail(email, {redirectTo: window.location.origin+window.location.pathname})`. Always shows the same generic "If an account exists for that email, a reset link has been sent" message on success, regardless of whether the email is registered — same enumeration-safety principle as the login form. Clicking the emailed link lands back on `renderSetPasswordPage()` (reason `'recovery'`, copy: "Choose a new password").
+- **Detecting which link was clicked** — `_authLinkType` is read from the URL (hash or query string, since the format varies) once, synchronously, before Supabase's client strips the tokens. `type=invite`/`type=recovery` sets `S.authMode='setPassword'` at boot, before the first render, so there's no flash of the login page first. The `PASSWORD_RECOVERY` event from `onAuthStateChange` sets the same state as a second, event-driven signal (link formats vary; this is redundant-but-safe insurance, not the primary mechanism).
+- **`S.authMode='setPassword'` overrides everything** — checked in `render()` ahead of the `S.session` gate, so it takes priority over both the login page and the app shell. If no session exists when this screen renders (expired/already-used link), it shows a "Link expired" dead-end with a button back to login instead of a form that would just fail on submit.
+- **Prerequisite — Supabase dashboard config (per project, dev and prod separately):** the `redirectTo` URL used above must be added to that project's Auth → URL Configuration → Redirect URLs allowlist, or Supabase silently falls back to the default Site URL instead. Not yet confirmed configured — check both Supabase projects before relying on this in production.
+
 ### profiles table (real display name + appraiser mapping)
 `id UUID PK (references auth.users.id), full_name TEXT, appraiser_id INTEGER (references users.id, nullable)`
 
@@ -50,7 +60,9 @@ Not self-service — rows are inserted manually via SQL/dashboard alongside crea
 - Unmapped accounts (no profile row, or `appraiser_id` is null/unrecognised) default to `'gabby'`. This is a placeholder — a proper Admin view for non-appraiser logins (e.g. office/admin accounts) is planned; the avatar toggle may be replaced by something else once that exists.
 - **Known gap found during release testing:** an anon-key request against the dev project currently gets `permission denied` (`42501`) on both `profiles` and `users` — worth checking `GRANT SELECT ... TO authenticated` (and RLS policies generally) in the Supabase dashboard before relying on `profiles` in production. This shouldn't affect the app itself (which only ever queries with a session, i.e. as `authenticated`, never as `anon`), but hasn't been verified end-to-end with a real confirmed login.
 
-**Security note:** login adds real *authentication*, but most tables (`packets`, `items`, `job_types`, etc.) still have RLS disabled — the anon publishable key can read/write them regardless of login state. `profiles` is the only table with RLS enabled so far. Locking down the rest is a separate, not-yet-done piece of work.
+  **RESOLVED — expected, not a bug.** Anon access to `profiles` and `users` was deliberately revoked as part of a security lockdown: RLS policies were replaced with authenticated-only access, then `revoke ... from anon` was run on each table. The app never relies on anon access to these tables — it only ever queries them post-login as the `authenticated` role, so the 401/42501 an anon-key request gets is the intended behaviour, not a misconfiguration. Confirmed working via manual login test as both real users (Gabby and Paula) after this change. Do not re-flag this as a bug in a future release.
+
+**Security note:** login adds real *authentication*, and RLS is now enabled on `profiles` and `users` (anon access revoked, authenticated-only policies — see "RESOLVED" note above). Most other tables (`packets`, `items`, `job_types`, etc.) still have RLS disabled — the anon publishable key can read/write them regardless of login state. Locking down the rest is a separate, not-yet-done piece of work.
 
 ---
 
@@ -272,7 +284,7 @@ A restricted-access admin area for complex operations not safe to expose in the 
 
 ## Planned Features
 - Admin dashboard for non-appraiser logins — accounts with no `appraiser_id` mapping currently default to Gabby's view; the G/P avatar toggle may be replaced by something else once this exists
-- RLS policies on the remaining tables (`packets`, `items`, `job_types`, etc.) — only `profiles` has RLS enabled so far
+- RLS policies on the remaining tables (`packets`, `items`, `job_types`, etc.) — `profiles` and `users` have RLS enabled (authenticated-only, anon revoked); the rest are still open to the anon key
 - CSV matching Solo accounting import
 - Records page: shipped/unshipped filter (deferred — spacing constraints)
 - Sub-customer address entry UI (currently populated directly in Supabase)
