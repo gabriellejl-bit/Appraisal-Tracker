@@ -9,9 +9,9 @@ Billing tracker for jewellery appraisal work. Paula and Gabby invoice jewellery 
 
 ## Stack
 - Frontend: Single HTML file (index.html) + external stylesheet (styles.css) - vanilla JS, no framework
-- Database: Supabase (PostgreSQL) via REST API - no SDK, raw fetch
+- Database: Supabase (PostgreSQL) via REST API - no SDK, raw fetch (all data access, still raw `sbAll`/`sbInsert`/etc.)
 - Hosting: GitHub Pages
-- Auth: None yet — user toggle in topbar. Supabase email/password planned.
+- Auth: Supabase Auth (email/password) via `supabase-js` (loaded from CDN, used only for `supabaseAuth.auth.*` — not for data access). See "Authentication" section below.
 
 ## Environments
 
@@ -25,6 +25,32 @@ Billing tracker for jewellery appraisal work. Paula and Gabby invoice jewellery 
 Only difference between files: SB_URL, SB_KEY, title tag. Dev is always ahead of or equal to prod.
 
 **Dev/Prod discipline:** Always test in dev first. DB changes: run in dev, verify, then prod. To create dev file: swap SB_URL, SB_KEY, and title tag only.
+
+---
+
+## Authentication
+
+Internal staff tool — **no public sign-up**. Staff accounts are created directly in the Supabase dashboard (Authentication > Users), not through the app.
+
+- **Sign in only** — `renderAuthPage()` renders a single login form (email + password) via `supabaseAuth.auth.signInWithPassword()`. No sign-up form exists in the app.
+- **Errors are generic** — any sign-in failure (wrong password, unconfirmed email, unknown account) shows only "Invalid email or password". The real Supabase error is never surfaced, so the UI can't be used to enumerate accounts or their state.
+- **Route protection** — `render()` gates on `S.session` at the very top: every view falls back to the login page when signed out. The app has no public pages, so this is a single global gate rather than per-route checks.
+- **Session persistence** — `supabaseAuth.auth.getSession()` restores an existing session on boot (page refresh); `supabaseAuth.auth.onAuthStateChange()` handles subsequent sign-in/out. `SIGNED_IN` reloads app data and re-renders; `SIGNED_OUT` clears loaded data and re-renders; `TOKEN_REFRESHED`/`USER_UPDATED` update `S.session` silently without calling `render()`, so a background token refresh can't wipe an in-progress Work Packet form draft.
+- **Logout** — sidenav "Logout" button calls `supabaseAuth.auth.signOut()`.
+- **Authenticated REST calls** — `hdrs()` sends `S.session.access_token` as the bearer token when a session exists, falling back to the anon `SB_KEY` only when signed out (i.e. only for the unauthenticated login page, which makes no data calls).
+
+### profiles table (real display name + appraiser mapping)
+`id UUID PK (references auth.users.id), full_name TEXT, appraiser_id INTEGER (references users.id, nullable)`
+
+Not self-service — rows are inserted manually via SQL/dashboard alongside creating the Auth user. RLS: enabled, with a single policy `auth.uid() = id` (a user can only read their own row).
+
+- `loadAll()` fetches the caller's own row (`&id=eq.<session.user.id>`) into `S.profile`, wrapped in its own try/catch — a missing table or row never blocks login, the header just falls back to showing the raw email.
+- Topbar header shows `S.profile.full_name` (falls back to `session.user.email` if no profile row exists).
+- `applyAppraiserDefault()` runs once per login/session-restore, right after `loadAll()`: looks up `S.profile.appraiser_id` in `S.users`, and sets `S.user` (the G/P work-attribution toggle) to that appraiser's `slug` as the *default*. The toggle buttons still work normally afterward — this only sets where you land, it doesn't lock the toggle.
+- Unmapped accounts (no profile row, or `appraiser_id` is null/unrecognised) default to `'gabby'`. This is a placeholder — a proper Admin view for non-appraiser logins (e.g. office/admin accounts) is planned; the avatar toggle may be replaced by something else once that exists.
+- **Known gap found during release testing:** an anon-key request against the dev project currently gets `permission denied` (`42501`) on both `profiles` and `users` — worth checking `GRANT SELECT ... TO authenticated` (and RLS policies generally) in the Supabase dashboard before relying on `profiles` in production. This shouldn't affect the app itself (which only ever queries with a session, i.e. as `authenticated`, never as `anon`), but hasn't been verified end-to-end with a real confirmed login.
+
+**Security note:** login adds real *authentication*, but most tables (`packets`, `items`, `job_types`, etc.) still have RLS disabled — the anon publishable key can read/write them regardless of login state. `profiles` is the only table with RLS enabled so far. Locking down the rest is a separate, not-yet-done piece of work.
 
 ---
 
@@ -61,6 +87,10 @@ WARNING: no id column. Sort: `&order=display_order.asc`
 ### sub_customers
 `id, retailer_id FK, name TEXT, display_order INTEGER, address_line1 TEXT, suburb TEXT, city TEXT, postcode TEXT`
 NJ sub-customers. Loaded into `S.subCustomers`. Address fields used in tax invoices.
+
+### profiles
+`id UUID PK (= auth.users.id), full_name TEXT, appraiser_id FK→users.id (nullable)`
+Not app-writable — rows created manually alongside each Supabase Auth staff account. RLS enabled (self-read-only). Loaded into `S.profile` (single row for the logged-in account). See "Authentication" section above for how it's used.
 
 ### packets
 `id TEXT PK, date TEXT (DD MMM YYYY), retailer_id FK, customer_ref TEXT, sub_customer_id FK→sub_customers.id (nullable, NJ only), surname TEXT, status_id FK, paula_billed BOOLEAN, gabby_billed BOOLEAN, shipping_run_id FK (nullable), created/modified TEXT`
@@ -135,7 +165,8 @@ Groups items by shipping run. Each run header: `Invoice: INV-XXXX YYYY-MM-DD (tr
 
 ## Nav Structure
 Centre: Dashboard · Records · Run Billing ($icon) · Reports · Shipping
-Right: [User toggle] [+ New Packet] [Connected dot]
+Right: [+ New Packet] [G/P work-attribution toggle] [logged-in identity: name/email from `profiles`/session]
+Sidenav General section: Admin · Logout (signs out via `supabaseAuth.auth.signOut()`)
 Reports nav active for: reports, billingRunsReport, customerReport.
 Shipping nav active for: shipping, shippingReport, fulfilmentReport.
 
@@ -198,7 +229,7 @@ Flat list of all shipping runs with packet counts and costs.
 **Toast:** `toast()` calls `render()` — never inside forms. Use `showToast()` (direct DOM inject, safe anywhere).
 
 **Key helpers:**
-- `getCurrentUser()` — full user row, call once per function
+- `getCurrentUser()` — full user row for the **work-attribution toggle** (`S.user`, G/P), call once per function. Not the logged-in identity — use `S.session.user` / `S.profile` for that (see "Authentication"). These two were previously conflated (the header briefly showed the toggle's name instead of the real login), so keep them separate: `S.user` drives business logic and can be switched anytime via the avatars; `S.session`/`S.profile` reflect who's actually authenticated and should never change when the avatars are clicked.
 - `scName(id)` — resolves `sub_customers.id` → display name; use everywhere instead of raw `sub_customer_name`
 - `getDollarStats()` — `{unbilled, earnedWeek, earnedMonth}` POST-TAX, POST-DISCOUNT
 - `packetCosts(id)` — applies retailer `discount_pct`, returns `{total, paula, gabby}` (billing use only — NOT for invoices)
@@ -237,10 +268,11 @@ A restricted-access admin area for complex operations not safe to expose in the 
 - Void a tax invoice (`tax_invoices.status = 'void'`) — does not delete shipping run
 - Reissue: create a new `tax_invoices` record with a new INV number linked to the same or corrected shipping run
 - Does not duplicate shipping run functionality — shipping run edits done via Shipping Runs Admin
-- Future: restrict to admin user only (Gabby) once auth is implemented
+- Future: restrict to admin user only (Gabby) — auth now exists, but the Admin view itself is not yet gated by it
 
 ## Planned Features
-- Proper auth (Supabase email/password)
+- Admin dashboard for non-appraiser logins — accounts with no `appraiser_id` mapping currently default to Gabby's view; the G/P avatar toggle may be replaced by something else once this exists
+- RLS policies on the remaining tables (`packets`, `items`, `job_types`, etc.) — only `profiles` has RLS enabled so far
 - CSV matching Solo accounting import
 - Records page: shipped/unshipped filter (deferred — spacing constraints)
 - Sub-customer address entry UI (currently populated directly in Supabase)

@@ -152,6 +152,15 @@
   display:     none;
 }
 
+/* Invalid field state -- styles.css sets --ember-light equal to --ember (not actually
+   lighter) and is unlayered, so it beats @layer components' .input.error. Re-assert here. */
+.input.error,
+.select.error,
+.select-input.error {
+  border-color: var(--color-destructive);
+  background:   var(--color-red-50);
+}
+
 /* Input/select padding — 0 top/bottom (height is fixed), md left/right.
    Unlayered override beats both styles.css *{margin:0} and @layer components. */
 .input,
