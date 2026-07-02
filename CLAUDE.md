@@ -111,7 +111,7 @@ Full project reference: `PROJECT.md` — read for DB schema, business rules, and
 
 **Step 1 modal summary format:** packet rows at full cost (no discount) → Shipping (net, input÷1.15) → Subtotal → GST (if user is GST-registered) → Total. The shipping input is gross (GST-inclusive); only shipping is divided by 1.15, not appraisals.
 
-**Tax invoice (NJ only):** Title "TAX INVOICE", To = sub-customer + address, From = PGL Appraisals 34 Tarbert Street Alexandra 9320. Line items at full cost (no discount). Shipping ex-GST (stored ÷ 1.15). GST on full subtotal. `printInvoice()` — do NOT apply `discountMult` to row amounts.
+**Tax invoice (NJ only):** Title "TAX INVOICE", To = sub-customer + address, From = PGL Appraisals 34 Tarbert Street Alexandra 9320. Line items at full cost (no discount). Shipping ex-GST (stored ÷ 1.15). GST on full subtotal. `printInvoice()` — do NOT apply `discountMult` to row amounts. Logo (`assets/images/PGL-FULL-LOGO.png`) embedded as **base64 data URI** — the popup window has no base URL so relative paths don't resolve. Print headers/footers suppressed via `@page { margin: 0 }` in the popup's CSS.
 
 **Billing Step 2 modal — NJ format:** One "Valuations - [sub-customer] - [date]" line + one "Shipping - [sub-customer] - [date] (N)" line per sub-customer. No job-type breakdown. Subtotal → discount → shipping total (ex-GST) → GST → Total.
 
