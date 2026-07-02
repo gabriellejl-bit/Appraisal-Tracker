@@ -12,6 +12,7 @@ Billing tracker for jewellery appraisal work. Paula and Gabby invoice jewellery 
 - Database: Supabase (PostgreSQL) via REST API - no SDK, raw fetch (all data access, still raw `sbAll`/`sbInsert`/etc.)
 - Hosting: GitHub Pages
 - Auth: Supabase Auth (email/password) via `supabase-js` (loaded from CDN, used only for `supabaseAuth.auth.*` — not for data access). See "Authentication" section below.
+- Backups: GitHub Actions daily cron (`.github/workflows/backup.yml`) — runs `pg_dump` at 2am UTC, commits SQL file to `backups/` on `main`. Requires `SUPABASE_PROD_DB_URL` secret set in GitHub repo settings.
 
 ## Environments
 
@@ -63,6 +64,25 @@ Not self-service — rows are inserted manually via SQL/dashboard alongside crea
   **RESOLVED — expected, not a bug.** Anon access to `profiles` and `users` was deliberately revoked as part of a security lockdown: RLS policies were replaced with authenticated-only access, then `revoke ... from anon` was run on each table. The app never relies on anon access to these tables — it only ever queries them post-login as the `authenticated` role, so the 401/42501 an anon-key request gets is the intended behaviour, not a misconfiguration. Confirmed working via manual login test as both real users (Gabby and Paula) after this change. Do not re-flag this as a bug in a future release.
 
 **Security note:** login adds real *authentication*, and RLS is now enabled on `profiles` and `users` (anon access revoked, authenticated-only policies — see "RESOLVED" note above). Most other tables (`packets`, `items`, `job_types`, etc.) still have RLS disabled — the anon publishable key can read/write them regardless of login state. Locking down the rest is a separate, not-yet-done piece of work.
+
+---
+
+## Infrastructure
+
+### Daily Database Backup
+`.github/workflows/backup.yml` — runs on a cron schedule (2am UTC daily) and can be triggered manually via `workflow_dispatch`.
+
+- Installs **PostgreSQL 17 client** explicitly (`/usr/lib/postgresql/17/bin/pg_dump`) — must match Supabase's server version (17). The default Ubuntu `postgresql-client` package is older and will refuse to dump a newer server.
+- GitHub Actions runners are **IPv4-only**. Supabase direct connections default to IPv6. Use the **Session pooler** connection string (not Direct connection) to avoid "Network is unreachable" errors. The session pooler URI looks different from the direct URI — get it from the Supabase Connect modal with "Session pooler" selected.
+- Requires `SUPABASE_PROD_DB_URL` secret in GitHub → Settings → Secrets and variables → Actions. Value is the PostgreSQL URI from Supabase Connect modal (session pooler, URI type): `postgresql://postgres.[project-ref]:[PASSWORD]@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres`
+- Backup files are committed to `backups/` on `main` as `backup_YYYY-MM-DD_HH-MM-SS.sql`.
+
+### Tax Invoice PDF (`printInvoice`)
+Generated via `window.open()` + `document.write()` — a new browser window, not an iframe or download.
+
+- **Images must be base64 data URIs** — the popup window has no base URL, so relative paths like `/assets/images/logo.png` resolve to nothing. Convert with `base64 -i file.png | tr -d '\n'` and embed as `data:image/png;base64,...`.
+- **Suppress browser print headers/footers** with `@page { margin: 0; }` in the popup's `<style>`. Compensate with `body { padding: 20mm; }` in `@media print`.
+- **Logo asset:** `assets/images/PGL-FULL-LOGO.png` (circular gold logo, 100×100 in invoice). Embedded as base64 in the `printInvoice` function.
 
 ---
 
