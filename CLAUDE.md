@@ -95,6 +95,7 @@ Full project reference: `PROJECT.md` — read for DB schema, business rules, and
 18. **Never use text as a PK or FK** — all database IDs must be integers or UUIDs. Text slugs are for display only. Text-based linking breaks silently on rename with no constraint error.
 19. **Invoice line items use FULL cost — no discount** — `discount_pct` is an internal billing split between Gabby and Paula; it is never deducted on customer-facing invoices or packing slips. Use raw `i.cost` (no `discountMult`) in `printInvoice`, `getPacketRows`, and the shipping audit cost column.
 20. **`S.user` (G/P toggle) is not login identity — never conflate them.** `S.user`/`getCurrentUser()` drive business logic (dashboard stats, GST, invoicing) and switch freely when the avatars are clicked. `S.session`/`S.profile` reflect who is actually authenticated and must never change on toggle clicks. This was a real bug: the header briefly showed the toggle's name instead of the logged-in account. See "Authentication" in `PROJECT.md`.
+21. **NJ combined-billing eligibility must never depend on `packets.status_id` or the `otherHasNoWork`/0%-shortcut pattern.** `renderBillingStep4()` and the manual billing toggle both auto-flip `status_id` to Billed when the *other* user has 0% on every item — correct for standard retailers (each bills only their split), wrong for NJ (Gabby always owes the retailer the full invoice regardless of her %). The NJ Statement flow's `njLinePool()` sidesteps this by keying eligibility off `tax_invoices.nj_statement_id`/`nj_credit_notes.nj_statement_id`/`nj_statements.paid_date` directly — never off `gabby_billed`, `paula_billed`, or `status_id`. Do not "simplify" this to reuse the shared status logic; that reintroduces the bug. Also: `buildInvoiceSummary()` applies `discount_pct` before splitting by `paula_pct`/`gabrielle_pct`, so Paula's NJ share is currently under-calculated by the discount amount — known, not yet fixed, invisible on every other retailer since they have `discount_pct=0`.
 
 ## Shipping & Invoicing
 
@@ -117,6 +118,17 @@ Full project reference: `PROJECT.md` — read for DB schema, business rules, and
 
 **PDF detailed report — NJ:** Groups items by shipping run. Each run labelled `Invoice: INV-XXXX YYYY-MM-DD (tracking ...XXXX)`. Falls back to `Shipment:` for runs without an invoice number.
 
+## NJ Statement (Gabby's actual NJ billing path)
+
+Full detail in `PROJECT.md` under "Nationwide Jewellers — Statement, Credit Notes & Reconciliation". Quick reference:
+
+- Reached via Run Billing Step 1 → select Nationwide Jewellers → Start → **chooser screen** (`S.billing.step==='nj'`, `renderNJChooser()`), not straight to Step 2. "Generate NJ Statement" → `S.view='njStatement'` (new, isolated code). "Continue to invoice wizard" → unchanged Step 2–4 (Paula's path, also Gabby's fallback).
+- New tables: `nj_statements` (draft/final/void, `paid_date`), `nj_statement_lines` (frozen snapshot — never recompute from live packet data on reprint), `nj_credit_notes`. New column `tax_invoices.nj_statement_id`.
+- **Finalize ≠ Paid.** Finalize bills the packets. Mark as Paid (Admin only) is what generates the credit note, dated for the following month — never generate a credit note at Finalize time.
+- Eligibility for the next statement is keyed off `nj_statement_id`/`paid_date` FKs, never `status_id`/`gabby_billed`/`paula_billed` — see rule 21 above for why.
+- Mark as Paid and Void both live in Admin (`njReconciliationCard()`), not on the Billing-side History screen — deliberate split between routine build/send actions and back-office reconciliation.
+- `printStatement()` reuses `printInvoice()`'s popup/base64-logo pattern via the shared `PGL_LOGO_B64` constant (declared near `gid()`) — don't re-embed the logo inline again if you touch either function.
+
 ## Authentication
 
 Internal staff tool — **sign-in only, no public sign-up**. Accounts are created directly in the Supabase dashboard (Authentication > Users), not through the app. Full detail in `PROJECT.md` under "Authentication"; quick reference for editing this code:
@@ -126,6 +138,7 @@ Internal staff tool — **sign-in only, no public sign-up**. Accounts are create
 - `render()` gates on `S.authMode` first, then `S.session` — if you add a new view, it's automatically protected; there's no per-route auth check to remember.
 - Sign-in and forgot-password errors always show a generic message ("Invalid email or password" / "If an account exists...") — never surface the raw Supabase error there, it can leak whether an account exists or is unconfirmed. `renderSetPasswordPage()` is the one exception where a specific error is fine (the link is already tied to one account, so there's no enumeration risk).
 - `onAuthStateChange` calls `render()` for `SIGNED_IN`/`SIGNED_OUT`/`PASSWORD_RECOVERY`. `TOKEN_REFRESHED`/`USER_UPDATED` update `S.session` silently — **do not add a `render()` call there**, it would wipe an in-progress Work Packet form draft on a background token refresh.
+- **`SIGNED_IN` can refire on tab refocus, not just a genuine new login** — supabase-js re-validates the session when the tab regains focus/visibility and can emit `SIGNED_IN` again for the *same* account, not only `TOKEN_REFRESHED`. The handler compares the new session's `user.id` against the previous one (captured before `S.session` is overwritten) and skips the full `loadAll()`+render reload when it's the same user — only a genuinely different account triggers it. Without this, every tab refocus (e.g. switching tabs to copy something) reset `S.ready` and wiped in-progress form drafts. Don't remove this check.
 - `hdrs()` sends `S.session.access_token` when signed in, falling back to the anon `SB_KEY` only when signed out. Don't hardcode `SB_KEY` in new fetch calls — always go through `hdrs()`/`sbAll`/etc.
 - `S.user` (G/P toggle) is **not** login identity — see rule 20 above. `S.profile` (from `public.profiles`, RLS-protected, one row per logged-in account) is the real identity; it's separate from `S.users` (the Gabby/Paula business rows the toggle switches between).
 - `applyAppraiserDefault()` runs once after `loadAll()` on login/session-restore, defaulting `S.user` from `S.profile.appraiser_id`. It never runs on every render, so it won't fight a manual toggle click mid-session.
@@ -171,4 +184,6 @@ Internal staff tool — **sign-in only, no public sign-up**. Accounts are create
 - [ ] Invoice/packing slip line items use raw `i.cost` — no `discountMult`
 - [ ] `S.user` (G/P toggle) not conflated with login identity (`S.session`/`S.profile`)
 - [ ] No `render()` added inside `onAuthStateChange` for `TOKEN_REFRESHED`/`USER_UPDATED`
+- [ ] NJ Statement eligibility keyed off `nj_statement_id`/`paid_date`, never `status_id`/`gabby_billed`/`paula_billed`
+- [ ] New Supabase tables have RLS explicitly disabled (or explicit policies) — the SQL Editor can silently enable RLS with no policies, which 403s every request
 - [ ] Tested in browser against dev Supabase before reporting done

@@ -138,8 +138,20 @@ Legacy column `sub_customer TEXT` still exists but is not read by app code — u
 **CRITICAL — shipping_cost is stored GST-inclusive.** Divide by 1.15 for ex-GST display. Default input value is $6. `getShippingForBilling()` pre-computes `totalExGST` and `bySubCustomerExGST`.
 
 ### tax_invoices
-`id TEXT PK, invoice_number TEXT UNIQUE (INV-XXXX format), shipping_run_id FK, issue_date TEXT, retailer_id FK, sub_customer_id FK→sub_customers.id (nullable), sub_customer_name TEXT (nullable, legacy), status TEXT ('active'|'void'), created TEXT`
-One record per NJ shipping run. `invoice_number` also denormalized onto `shipping_runs` for fast display. Packets inferred via `packets.shipping_run_id`. Loaded into `S.taxInvoices`.
+`id TEXT PK, invoice_number TEXT UNIQUE (INV-XXXX format), shipping_run_id FK, issue_date TEXT, retailer_id FK, sub_customer_id FK→sub_customers.id (nullable), sub_customer_name TEXT (nullable, legacy), status TEXT ('active'|'void'), nj_statement_id FK→nj_statements.id (nullable), created TEXT`
+One record per NJ shipping run. `invoice_number` also denormalized onto `shipping_runs` for fast display. Packets inferred via `packets.shipping_run_id`. Loaded into `S.taxInvoices`. `nj_statement_id` is null when the invoice hasn't been put on a statement yet (i.e. it's eligible for the next one) — see "Nationwide Jewellers — Statement" below.
+
+### nj_statements
+`id TEXT PK, period_start TEXT, period_end TEXT, generated_date TEXT, subtotal DECIMAL, gst DECIMAL, total DECIMAL, accounting_ref TEXT (nullable), status TEXT ('draft'|'final'|'void'), paid_date TEXT (nullable), created TEXT`
+One row per monthly consolidated statement sent to Nationwide. `period_start`/`period_end` are descriptive labels only (auto-derived from included lines), not a filter — eligibility is purely "not yet on a statement". `accounting_ref` is filled in manually after the equivalent is hand-entered into the real accounting system. `paid_date` is set via the Admin "Mark as Paid" action and is what actually triggers credit-note generation (not finalizing). Loaded into `S.njStatements`.
+
+### nj_statement_lines
+`id TEXT PK, statement_id FK→nj_statements.id, line_type TEXT ('invoice'|'credit'|'brought_forward'), tax_invoice_id FK (nullable), credit_note_id FK→nj_credit_notes.id (nullable), carried_statement_id FK→nj_statements.id (nullable), sub_customer_name TEXT, amount DECIMAL (signed — negative for credit lines)`
+Frozen snapshot of what a statement contains, written at Save Draft/Finalize time — never recomputed from live packet data, so reprinting an old statement can't silently change its historical numbers. Loaded into `S.njStatementLines`.
+
+### nj_credit_notes
+`id TEXT PK, source_statement_id FK→nj_statements.id, nj_statement_id FK→nj_statements.id (nullable), accounting_ref TEXT (nullable), subtotal DECIMAL, gst DECIMAL, total DECIMAL, issue_date TEXT, status TEXT ('draft'|'void'), created TEXT`
+Nationwide's 8.5% commission, auto-generated as `draft` the moment its `source_statement_id` is marked Paid (dated for the following month) — never at Finalize time. `nj_statement_id` is null until it's included as a line on a later statement (mirrors the `tax_invoices.nj_statement_id` pattern). Loaded into `S.njCreditNotes`.
 
 ### billing_runs
 `id TEXT PK, run_date TEXT, user_name TEXT (slug), retailer_ids TEXT (csv), packet_ids TEXT (csv), status TEXT, created TEXT`
@@ -168,7 +180,32 @@ One record per NJ shipping run. `invoice_number` also denormalized onto `shippin
 - Gabby's billing selection includes ALL NJ items (even where `gabrielle_pct=0`). Paula sees only `paula_pct > 0` items.
 - Step 2 modal: Gabby → "[Retailer] — All", Paula → "[Retailer] — Invoice Gabby" (subtitle: "Invoice to: Gabby Lovering")
 - Invoice summary groups by sub-customer: one "Valuations - [sub-customer] - [date]" line + one "Shipping - [sub-customer] - [date] (N)" line per sub-customer. Then gross subtotal → discount → shipping total (ex-GST) → GST → Total.
-- `isRetailerCombined(retailerId)` checks `combined_billing` flag.
+- `isRetailerCombined(retailerId)` checks `combined_billing` flag — currently dead code, every actual check in the codebase uses a hardcoded `retailer.name==='Nationwide Jewellers'` comparison instead. Noted, not cleaned up.
+- The above (`getBillingItems()`, Step 1–4) is still Paula's path for invoicing Gabby her share, and is available to Gabby as a manual fallback. It is **not** how Gabby actually bills Nationwide any more — see below.
+
+**Nationwide Jewellers — Statement, Credit Notes & Reconciliation (Gabby's actual NJ billing path):**
+
+Gabby doesn't bill Nationwide per-retailer through the Run Billing wizard. Selecting Nationwide Jewellers in Step 1 and clicking Start goes to a **chooser screen** (`renderNJChooser()`, `S.billing.step==='nj'`) instead of Step 2: "Generate NJ Statement" (below) or "Continue to invoice wizard" (the unchanged Step 2–4 wizard above, what Paula uses).
+
+Three real-world documents, only the second is built in this app:
+1. **Tax Invoice** — existing, unchanged. Per shipping run, per sub-customer, full undiscounted cost. Nationwide requires a copy of every tax invoice forwarded to their office at least weekly (manual step, not automated).
+2. **Statement** — new. One consolidated statement per month, rolling up that period's tax invoices (plus any brought-forward balance and prior credit note) into an accounting-style document sent to Nationwide and separately hand-entered into the real accounting system. Built via `renderNJStatementBuilder()` / `S.view==='njStatement'`.
+3. **Credit Note** — new. Nationwide's 8.5% commission isn't a discount applied at invoicing or statement time — Gabby bills the full amount, Nationwide pays the statement total *less* 8.5%, and the following month Gabby issues a credit note for that 8.5%, appearing as a line on the *next* statement.
+
+**Statement lifecycle:** `draft` (add/remove eligible lines, live totals, preview freely, nothing persisted until Save Draft) → `final` (Finalize: bills the underlying packets — `gabby_billed=true` unconditionally, `status_id` only flips to Billed if `paula_billed` is already genuinely true, no shortcut — see bug note below) → **Paid** (`paid_date`, set via Admin "Mark as Paid", not part of `status` — this is what generates the credit note, not Finalize) → `void` (Admin only, reverses billing and releases everything back to the eligible pool; refuses if the statement's own credit note has already been used on a later statement rather than guessing at an unwind).
+
+**Selection logic — deliberately not based on `packets.gabby_billed`, `status_id`, or split %:**
+- Invoice lines: `tax_invoices` where `retailer_id=NJ`, `status='active'`, `nj_statement_id IS NULL`
+- Credit lines: `nj_credit_notes` where `status='draft'`, `nj_statement_id IS NULL`
+- Brought-forward lines: `nj_statements` where `status='final'`, `paid_date IS NULL` — re-surfaces on every subsequent statement build for as long as it stays unpaid, and marking the *new* statement Paid cascades to mark the absorbed one Paid too (generating its credit note, late but correct) — one click resolves a multi-hop chain.
+
+**Known pre-existing bug this sidesteps, not fixed:** `renderBillingStep4()` and the manual per-packet billing toggle both auto-flip `status_id` to Billed when the *other* user has 0% on every item in a packet — correct for standard retailers, wrong for NJ (Gabby always owes Nationwide the full invoice regardless of her %). If Paula bills a 100%-Paula NJ packet first via the old wizard, `status_id` can show "Billed" in Records/Dashboard before Gabby has actually put it on a statement. The Statement flow's selection logic above is immune to this, but the on-screen label can still mislead. Interim workaround: bill Gabby first where practical.
+
+**Admin — NJ Statement Reconciliation** (`renderAdmin()`, alongside the still-stubbed Shipping Runs Admin / Tax Invoice Admin): lists finalized statements, unpaid ones first. "Mark as Paid" generates the credit note and cascades the brought-forward chain. "Void" reverses billing and releases everything, with the same confirmation-modal pattern used elsewhere.
+
+**Key helpers:** `njRetailer()`, `njTaxInvoiceAmount(ti)` (recomputes a tax invoice's GST-inclusive total from its packets, same math as `printInvoice()`), `njLinePool()` (the eligible-lines pool described above), `njStatementPeriodLabel(st)`, `saveNJDraft()`, `finalizeNJStatement()`, `markNJStatementPaid(id)` (recursive for chained brought-forward), `voidNJStatement(id)`, `printStatement(id)` (reuses `printInvoice()`'s popup/base64-logo pattern via the shared `PGL_LOGO_B64` constant — extracted from `printInvoice()` so both share one copy instead of duplicating the ~32KB logo).
+
+**Still open:** Nationwide's Bill-To address on the printed Statement is the AU head-office address from their supplier procedure doc (flagged inline with a code comment) — not yet confirmed correct for NZ-issued statements. The discount-leak in `buildInvoiceSummary()` (discount applied before splitting by `paula_pct`/`gabrielle_pct`, so Paula's NJ share is under-calculated by 8.5%) is also still unfixed — see rule 21 in `CLAUDE.md`.
 
 **Business rule — one invoice/slip per packet:**
 A packet can never appear on more than one invoice or packing slip. The database enforces this structurally (`packets.shipping_run_id` is a single FK), and the shipping view enforces it in the UI by only showing packets where `shipping_run_id IS NULL`. If a packet needs to move to a different run (e.g. error correction), it must first be removed from the existing run (voiding or editing the invoice/slip) before it can be re-shipped. The UI for this is a future todo — see "Invoice edit / void screen" in Planned Features.
@@ -201,6 +238,7 @@ Right: [+ New Packet] [G/P work-attribution toggle] [logged-in identity: name/em
 Sidenav General section: Admin · Logout (signs out via `supabaseAuth.auth.signOut()`)
 Reports nav active for: reports, billingRunsReport, customerReport.
 Shipping nav active for: shipping, shippingReport, fulfilmentReport.
+NJ Statement flow lives under `S.view==='njStatement'` (`renderNJStatement()`, dispatches on `S.njStatement.step`: `'builder'`/`'history'`) — reached only via the Run Billing chooser, not its own nav item.
 
 ## Views / Screens
 
@@ -226,10 +264,18 @@ Shipping nav active for: shipping, shippingReport, fulfilmentReport.
 - Items (up to 3): Item + Job Type, Cost, Split slider
 
 ### Run Billing (4 steps)
-1. Selection: date filter (default last month), status filter. Auto-selects eligible items via `b.initialised` flag.
+1. Selection: date filter (default last month), status filter. Auto-selects eligible items via `b.initialised` flag. **NJ retailer:** Start is enabled once the retailer is picked, regardless of item selection — the Statement path below doesn't depend on `selectedItemIds` at all, so gating it the same as every other retailer made the chooser unreachable whenever nothing was left to bill via the old per-item flow.
 2. Retailer modal loop: invoice summary (copy/paste) + items table. GST conditional. NJ groups by sub-customer.
 3. PDFs: jsPDF A4, Courier monospace. NJ groups by shipping run/invoice.
 4. Confirm: sets per-user billed flags, saves billing run.
+
+**NJ chooser** (between Step 1 and 2, NJ retailer only): "Generate NJ Statement" → below, or "Continue to invoice wizard" → unchanged Step 2–4 (Paula's path).
+
+### NJ Statement Builder
+Draft-building view (`renderNJStatementBuilder()`). Eligible tax invoices/credit notes/brought-forward balances, all pre-checked (same auto-select-then-deselect pattern as Shipping/Step 1), live Subtotal/GST/Total. Nothing persists until Save Draft or Finalize (matches the Run Billing wizard's own in-memory-until-confirm pattern). Save Draft / Preview / Finalize / Cancel.
+
+### NJ Statement History
+Read-only-ish list (`renderNJStatementHistory()`, `S.njStatement.step==='history'`, reached via a link on the chooser screen): Period, Generated date, Status, Total, inline-editable Accounting Ref, linked credit-note status. Draft → Edit/Preview. Final → Reprint only — Mark as Paid and Void live in Admin instead, not here.
 
 ### Reports
 Landing page → Billing Runs, Customer Report.
@@ -272,6 +318,8 @@ Flat list of all shipping runs with packet counts and costs.
 - `nextInvoiceNumber()` — returns next `INV-XXXX` string
 - `generatePDFContent(retailerId)` — text lines for detailed billing PDF
 - `retailerName(id)`, `statusName(id)`, `fmtMoney(n)`, `fmtD(d)`, `getDateRange(key)`
+- `njRetailer()`, `njTaxInvoiceAmount(ti)`, `njLinePool()`, `njStatementPeriodLabel(st)`, `saveNJDraft()`, `finalizeNJStatement()`, `markNJStatementPaid(id)`, `voidNJStatement(id)`, `printStatement(id)` — see "Nationwide Jewellers — Statement" above
+- `PGL_LOGO_B64` — shared base64 logo constant, used by both `printInvoice()` and `printStatement()` (extracted from `printInvoice()` so the ~32KB payload isn't duplicated)
 
 **IDs:** `Date.now().toString(36) + Math.random().toString(36).slice(2,7)` via `gid()`
 
@@ -286,9 +334,11 @@ Flat list of all shipping runs with packet counts and costs.
 
 ---
 
-## Admin Section (planned)
+## Admin Section (partially built)
 
-A restricted-access admin area for complex operations not safe to expose in the main UI.
+A restricted-access admin area for complex operations not safe to expose in the main UI. Not yet gated to admin-only users — anyone signed in can currently reach it.
+
+**NJ Statement Reconciliation — built.** Lists finalized statements (unpaid first). Mark as Paid (generates the credit note, cascades any brought-forward chain) and Void (reverses billing, releases everything, refuses rather than guessing if the statement's credit note has already been used downstream). See "Nationwide Jewellers — Statement" above for full detail.
 
 **Shipping Runs Admin:**
 - View all shipping runs with full detail
@@ -308,10 +358,11 @@ A restricted-access admin area for complex operations not safe to expose in the 
 - CSV matching Solo accounting import
 - Records page: shipped/unshipped filter (deferred — spacing constraints)
 - Sub-customer address entry UI (currently populated directly in Supabase)
-- **Invoice edit / void screen** — View a specific invoice's packets, remove items (sets `packets.shipping_run_id = null`), void (`tax_invoices.status = 'void'`), and reissue with a new INV number. Data model already supports this. Required to enforce the one-invoice-per-packet rule when correcting errors.
+- **Invoice edit / void screen** — this is about individual `tax_invoices` (INV-XXXX), distinct from the statement-level void that's now built. View a specific invoice's packets, remove items (sets `packets.shipping_run_id = null`), void (`tax_invoices.status = 'void'`), and reissue with a new INV number. Data model already supports this. Required to enforce the one-invoice-per-packet rule when correcting a shipping/invoicing error (as opposed to a whole-statement error, which Void in Admin now handles).
 - **Invoice search** — Search by INV number, sub-customer, date, amount.
-- **NJ billing reconciliation** — View all INV-XXXX numbers in a billing period + totals; print all for sending to Nationwide alongside the accounting system invoice. Defer until Nationwide billing flow confirmed.
+- ~~NJ billing reconciliation~~ — done, via NJ Statement History + Admin (see "Nationwide Jewellers — Statement" above).
 - **Alexandra / Queenstown billing review** — Manual test pass: verify Step 2 modal and PDF generation are correct under the unified billing model (no shipping, unaffected by tax_invoices change).
+- **Voiding an already-Paid NJ statement whose credit note is already used elsewhere** — `voidNJStatement()` currently refuses this case outright rather than unwinding it automatically; needs a real design before it's more than a safe refusal.
 
 ## Future Reports — Split Reconciliation
 
@@ -319,6 +370,8 @@ Since June 2026, Gabby invoices all retailers for the full cost, and Paula invoi
 
 **1. Paula's Split Report**
 For a given billing run or date range, show Paula's share of each packet item — `paula_pct` applied to the discounted cost. This is what Paula invoices Gabby. Should match the amounts on Paula's generated PDFs.
+
+**Note — this spec may itself be wrong.** Per Gabby: Paula is effectively a subcontractor, and her invoice should be `paula_pct` applied to the *raw, undiscounted* cost (e.g. $100 packet, 100% Paula → she bills exactly $100) — the discount is Gabby's margin to absorb, not something that should reduce Paula's payment. `buildInvoiceSummary()` currently applies the discount before splitting by `paula_pct`, which matches this doc's "discounted cost" wording but not what Gabby actually wants — only visible for NJ since every other retailer has `discount_pct=0`. Flagged, not fixed — see `CLAUDE.md` rule 21. Resolve this before building either report below, since both depend on getting Paula's share formula right.
 
 **2. Split Reconciliation Report**
 Side-by-side comparison of: (a) what Gabby billed the retailer (full cost after discount), (b) Paula's share (from `paula_pct`), (c) Gabby's effective share (total minus Paula's). Allows both to verify the internal split against the retailer-facing invoice.
