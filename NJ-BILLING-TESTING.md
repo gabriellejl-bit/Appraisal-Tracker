@@ -4,12 +4,30 @@ Tracks testing progress across the Run Billing rebuild (landing screen + invoice
 
 Status markers: **Not built** / **Built, untested** / **Claude-tested** / **Gabby-tested**
 
-**⚠ DB migrations required before testing:**
-```sql
-ALTER TABLE nj_statements ADD COLUMN statement_date TEXT;
-ALTER TABLE shipping_runs ADD COLUMN shipping_cost_billed DECIMAL;
-```
-Run both in the dev Supabase SQL editor before shipping/statement testing. Without the first, `saveNJDraft()`/`finalizeNJStatement()` fail on `statement_date`. Without the second, new NJ shipments won't have a marked-up shipping figure to invoice against (falls back to the raw, un-marked-up `shipping_cost` — not wrong, just not the intended 10% markup).
+---
+
+## 2026-07-15 — NJ Reconciliation Redesign (payment tracked per-invoice, not carried forward)
+
+Everything below "Flow 2 — Nationwide" in this doc describes the **old** carry-forward/Mark-as-Paid design. That design has been replaced — see `NJ-RECONCILIATION-REDESIGN.md` for the spec and `PROJECT.md`'s "Nationwide Jewellers — Statement" section for the current model. Kept below for historical context (real bugs found in the old design), not as current behavior.
+
+**DB migration required (dev):** new `nj_payments` table, `tax_invoices.paid_date`/`paid_via_payment_id`, `nj_credit_notes.source_payment_id` (replaces `source_statement_id`), `nj_statement_lines.payment_id` (replaces `carried_statement_id`), `nj_statements.opening_balance`/`aging_current`/`aging_30`/`aging_60`/`aging_90`. Existing dev NJ statement/line/credit-note test data wiped as part of the migration (confirmed with Gabby). Full SQL in the implementation plan.
+
+**Claude-tested, end-to-end, against real dev data (6 pre-existing tax invoices, INV-0001–0011):**
+
+| Step | Result |
+|---|---|
+| Build + Save Draft + Generate + Finalize first statement (June 2026, 6 invoices, no prior data) | Opening Balance $0.00 (correct — first ever statement). Subtotal $1,311.72 + GST $196.76 = Total $1,508.48, frozen onto `nj_statements` correctly. `nj_statement_id` set on all 6 invoices, packets billed (Dashboard Unbilled $1,188.81 → $900.68) |
+| Record Payment: tick INV-0004 ($412.50) + INV-0005 ($470.00) = $882.50, amount received $807.59 | Live credit-note preview updated correctly to $74.91 as ticked. On confirm: both invoices got `paid_date`/`paid_via_payment_id` set, one credit note created (`total: 74.91`, subtotal/GST split correctly at 15%, `issue_date` same day as payment, `source_payment_id` set) |
+| Build July 2026 statement (after the payment) | **Opening Balance $625.98** — recomputed live from the 4 still-unpaid invoices from June, not copied from the June statement's stored total. New lines: 4 new real invoices ($1,071.70) + credit note (−$74.91) + payment (−$807.59) = Total $189.20. **Closing Balance $815.18** = Opening + Total, verified exact |
+| Void the payment | Invoices reverted to unpaid (`paid_date`/`paid_via_payment_id` cleared), credit note voided, live balance back to $1,508.48 exactly |
+| Void the finalized statement | Status → `void`, all 6 invoices released (`nj_statement_id` → null), packets reverted to unbilled (`gabby_billed: false`, `status_id`: New), live balance → $0 (nothing "presented" anymore) |
+| Regression: Direct/Alexandra/Queenstown Run Billing Step 1 | Renders correctly, NJ still excluded from retailer dropdown, no console errors |
+
+**Real bug found and fixed during this session (not a code bug — a Supabase config gotcha):** `nj_payments` had RLS enabled with zero policies (silent 403 on every insert) despite the migration script including `DISABLE ROW LEVEL SECURITY` — the disable statement was in a batch that hadn't fully executed yet when first tested. Root-caused via `SELECT relname, relrowsecurity FROM pg_class` + `SELECT * FROM pg_policies` (ground truth, not assumption). Also discovered mid-investigation: `PROJECT.md` incorrectly claimed `packets`/`tax_invoices` had RLS disabled — they actually have RLS enabled with a working `"Authenticated staff access"` policy. Fixed by adding the same policy to `nj_payments` rather than disabling RLS on it, and corrected the stale doc claim (see `PROJECT.md`'s Authentication → Security note).
+
+**Gabby-tested since:** the Admin "Record Payment" modal has since been exercised directly through the real UI multiple times against real dev data (the June/July reconciliation covered in `PROJECT.md`'s "Nationwide Jewellers — Statement" section), including catching two real issues that got fixed in the same pass: an RLS gap on `nj_payments`, and the Month selector allowing an already-finalized period to be reopened (fixed via `njMonthOptions()`/`njNextOpenMonth()`).
+
+*(The `nj_statements.statement_date` and `shipping_runs.shipping_cost_billed` migrations from the previous session are long since applied in dev — no longer a pre-requisite worth calling out here.)*
 
 ---
 
@@ -57,21 +75,18 @@ Landing screen is keyed off the G/P toggle — always exactly 2 options, not 3. 
 
 | Step | Status | Notes |
 |---|---|---|
-| Month selector on builder screen, defaults to previous calendar month | Built, untested | Resuming an existing draft infers the month from its `statement_date`/`period_end` instead, so already-attached lines don't silently drop out |
-| Eligibility cutoff at month-end (invoices/credits dated after are excluded, wait for next statement) | Built, untested | `njLinePool()` now filters both invoice and credit lines against `njMonthEndDate(b.month)` |
-| Filename / print title → "PGL Appraisals Statement 31 Jul 2026" style | Built, untested | Set via `win.document.title`; browser's "Save as PDF" in the print dialog uses this as the suggested filename |
-| "Statement Period" → "Statement Date" (single month-end date) | Built, untested | |
-| Columns: Issued Date, Invoice No, Description, Total Amount, Total Paid, Balance Due | Built, untested | Balance Due is a running total down the dated rows |
-| Bottom summary: Current / 30 days / 60 days / 90 days / Balance due | Built, untested | Confirmed new functionality (not a formatting tweak) — buckets each line by age (statement date − line date), not the running balance |
-| Credit note reference shows a date range instead of a real credit note number | Not built | Deferred — noted by Gabby, needs proper numbering on `nj_credit_notes` alongside full invoice-style credit note formatting |
-| Payment sweep: statements marked Paid appear as a "Payment received" line, amount under Total Paid | Built, untested | New — amount = statement total minus its own credit note (i.e. what Nationwide actually paid net of their 8.5%) |
-| Opening Balance sweep no longer stops once a statement is marked Paid | Built, untested | Was previously excluded via `!paid_date`; now stays eligible until actually swept onto a later statement (alongside its Payment + Credit lines), tracked the same way tax invoices are, via existing lines rather than a new DB field |
-| Date-overflow bug in `markNJStatementPaid()` | Fixed | Paying on the 29th–31st of a month whose following month is shorter (e.g. Jan 31 → "Feb 31") produced an invalid date string used for the credit note's `issue_date`. Now clamped to the last valid day of the target month |
-| "Generated" date removed from meta-grid (redundant with Statement Date) | Built, untested | |
-| GST Number row in meta-grid | Built, untested | `PGL_GST_NUMBER` (near `PGL_LOGO_B64`, top of file) set to 030-949-348 |
-| Payment Details footer (bank account) | Built, untested | Plain — no remittance tear-off/address, per Gabby's clarification. `PGL_BANK_ACCOUNT_NAME`/`PGL_BANK_ACCOUNT_NUMBER` constants (near `PGL_LOGO_B64`) currently "Coco Solo" / "04-2021-0403908-67" — confirmed by Gabby as the real account despite the name not matching "PGL Appraisals" shown elsewhere |
-| Latent bug found while building the payment sweep: `voidNJStatement()` never deletes `nj_statement_lines` rows | Fixed | A brought-forward/payment line swept onto a statement that's later voided would otherwise permanently look "already swept" and never resurface. The new `sweptElsewhere()` check in `njLinePool()` excludes lines belonging to a void statement |
-| **Critical bug found in testing:** double-counted payment when a statement was itself brought-forward into another, and both later got marked Paid independently (the recursive Paid cascade does this) | Fixed | Produced a wildly wrong, deeply negative statement total (-$757.04 instead of ~$0 net). Payment sweep now also excludes any statement that's been swept elsewhere as a brought-forward line — its resolution flows through whichever statement absorbed it, not independently. **Statement `mrjvev3qlv0co` (July draft, already finalized) has this bad data baked in — needs Admin → NJ Statement Reconciliation → Void before rebuilding.** |
+| Month selector on builder screen | Superseded | Originally defaulted to "previous calendar month"; now defaults to `njNextOpenMonth()` (the month right after the most recently finalized statement) and only ever lists that one month — see the redesign section at the top of this doc |
+| Eligibility cutoff at month-end (invoices/credits dated after are excluded, wait for next statement) | Gabby-tested | `njLinePool()` filters invoice/credit/payment lines against `njMonthEndDate(b.month)` — unchanged concept, still correct under the redesign |
+| Filename / print title → "PGL Appraisals Statement 31 Jul 2026" style | Gabby-tested | Set via `win.document.title`; browser's "Save as PDF" in the print dialog uses this as the suggested filename |
+| "Statement Period" → "Statement Date" (single month-end date) | Gabby-tested | |
+| Columns: Issued Date, Invoice No, Description, Total Amount, Total Paid, Balance Due | Gabby-tested | Balance Due is a running total starting from the frozen Opening Balance, not zero (see redesign section) |
+| Bottom summary: Subtotal (excl GST) / GST / Total Debits / Total Credits / Current / 30/60/90 days / Balance due | Gabby-tested | Reworked twice more since first built — see the redesign section and the two follow-up formatting fixes below for the current, correct shape |
+| Credit note reference shows a date range instead of a real credit note number | Not built | Still deferred — needs proper numbering on `nj_credit_notes` alongside full invoice-style credit note formatting |
+| "Generated" date removed from meta-grid (redundant with Statement Date) | Gabby-tested | |
+| GST Number row in meta-grid | Gabby-tested | `PGL_GST_NUMBER` (near `PGL_LOGO_B64`, top of file) set to 030-949-348 |
+| Payment Details footer (bank account) | Gabby-tested | Plain — no remittance tear-off/address, per Gabby's clarification. `PGL_BANK_ACCOUNT_NAME`/`PGL_BANK_ACCOUNT_NUMBER` constants (near `PGL_LOGO_B64`) currently "Coco Solo" / "04-2021-0403908-67" — confirmed by Gabby as the real account despite the name not matching "PGL Appraisals" shown elsewhere |
+
+*(The payment-sweep/brought-forward line types, `sweptElsewhere()`, and the recursive Mark-as-Paid cascade this section used to document are gone entirely under the redesign — including the double-counted-payment bug and its bad-data statement, which was voided during the redesign's own testing. See the redesign section at the top of this doc and `PROJECT.md` for the current model.)*
 
 ## Flow 3 — Nationwide - Paula (Paula invoices Gabby for her NJ share)
 
@@ -141,10 +156,7 @@ Root cause: `win.print()` was called synchronously right after `document.write()
 
 - Paula discount-leak in `buildInvoiceSummary()` — her NJ share is under-calculated by the discount %.
 - NJ Statement Bill-To address uses Nationwide's AU head-office address — unconfirmed for NZ-issued statements.
-- Voiding an already-Paid statement whose credit note is already used on a later statement — currently just refuses, no unwind logic.
 - `isRetailerCombined()` dead-code cleanup — cosmetic.
 - Credit notes need a proper credit note number (like `INV-XXXX` for tax invoices) instead of a date-range reference.
 
-## Leftover dev test data
-
-One voided statement, two finalized-and-paid statements using all 6 real NJ tax invoices, with credit notes generated — still sitting in dev Supabase as of this rework. Decision on cleanup still pending.
+*(The old "voiding an already-Paid statement whose credit note is used elsewhere" issue no longer applies — the payment-entity redesign removed the cross-statement credit note chain that caused it. Voiding a payment or a statement is now independent of the other; see `PROJECT.md`.)*
