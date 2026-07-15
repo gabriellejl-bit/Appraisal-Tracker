@@ -75,14 +75,13 @@ let S={
   },
   billingRuns:[],users:[],     // loaded from Supabase
   view:'home',editId:null,search:'',subCustomers:[],shippingRuns:[],taxInvoices:[],
-  njStatements:[],njStatementLines:[],njCreditNotes:[], // Nationwide Jewellers statement feature
+  njStatements:[],njStatementLines:[],njCreditNotes:[],njPayments:[], // Nationwide Jewellers statement feature
   njStatement:{
     step:0,          // 0=off, 'chooser', 'builder', 'preview', 'history'
     draftId:null,    // nj_statements.id once a draft has been saved (null = unsaved, in-memory only)
     month:null,      // 'YYYY-MM' -- which month's statement this is; drives the eligibility cutoff and printed statement_date
     excludedTaxInvoiceIds:new Set(),   // eligible items unchecked by the user
     excludedCreditNoteIds:new Set(),
-    excludedCarriedStatementIds:new Set(),
     excludedPaymentIds:new Set(),
     hasGenerated:false, // true once "Generate Statement" has produced a printout THIS session -- gates Finalize. Reset to false by any further selection change so a stale printout can't be finalized against.
   },
@@ -300,6 +299,8 @@ async function loadAll(){
   catch(e){console.warn('nj_statement_lines load failed:',e);S.njStatementLines=[];}
   try{S.njCreditNotes=await sbAll('nj_credit_notes','&order=created.desc')||[];}
   catch(e){console.warn('nj_credit_notes load failed:',e);S.njCreditNotes=[];}
+  try{S.njPayments=await sbAll('nj_payments','&order=created.desc')||[];}
+  catch(e){console.warn('nj_payments load failed:',e);S.njPayments=[];}
   // Logged-in account's display profile -- id matches auth.users.id, not tied to the G/P work-attribution toggle
   try{
     const rows=await sbAll('profiles','&id=eq.'+S.session.user.id);
@@ -2005,9 +2006,10 @@ function renderBillingLanding(){
       S.njStatement.draftId=existingDraft?existingDraft.id:null;
       // Resuming: infer the month from what's already attached (statement_date, or period_end
       // for drafts saved before that field existed) so already-included lines don't silently
-      // fall outside the cutoff. Fresh draft: default to last calendar month per Gabby's workflow
-      // (this is normally run in the first few days of the following month).
-      S.njStatement.month=existingDraft?njMonthKeyFromDate(existingDraft.statement_date||existingDraft.period_end):njPrevMonthKey();
+      // fall outside the cutoff. Fresh draft: default to the month right after the most recently
+      // finalized statement (not just "last calendar month") -- always lands on the correct next
+      // open period, never on one that's already done.
+      S.njStatement.month=existingDraft?njMonthKeyFromDate(existingDraft.statement_date||existingDraft.period_end):njNextOpenMonth();
       S.njStatement.hasGenerated=false;
       S.view='njStatement';S.njStatement.step='builder';render();
     },h('button',{className:'btn btn-link',style:{padding:0,marginTop:'var(--space-2)'},onClick:()=>{S.view='njStatement';S.njStatement.step='history';render();}},'View Statement History'))
@@ -2057,21 +2059,17 @@ function renderNJStatementHistory(){
       h('th',{className:'table-header'},'Status'),
       h('th',{className:'table-header',style:{textAlign:'right'}},'Total ($)'),
       h('th',{className:'table-header'},'Accounting Ref'),
-      h('th',{className:'table-header'},'Credit Note'),
       h('th',{className:'table-header'},''),
     )));
     const tb=h('tbody',{});
     statements.forEach(st=>{
-      const statusLabel=st.status==='draft'?'Draft':st.status==='void'?'Void':(st.paid_date?'Final — Paid':'Final — Unpaid');
+      const statusLabel=st.status==='draft'?'Draft':st.status==='void'?'Void':'Final';
       const refInput=h('input',{className:'input',style:{maxWidth:'140px',height:'36px'}});
       refInput.value=st.accounting_ref||'';
       refInput.addEventListener('change',async()=>{
         try{await sbUpdate('nj_statements',st.id,{accounting_ref:refInput.value||null});st.accounting_ref=refInput.value||null;showToast('Saved');}
         catch(e){showToast('Error: '+e.message,true);}
       });
-      const cn=S.njCreditNotes.find(x=>x.source_statement_id===st.id);
-      const cnLabel=!cn?'—':(cn.nj_statement_id?('Applied to '+njStatementPeriodLabel(S.njStatements.find(s=>s.id===cn.nj_statement_id))):'Pending ('+fmtMoney(parseFloat(cn.total)||0)+')');
-      const unpaidFlag=(st.status==='final'&&!st.paid_date)?h('div',{style:{fontSize:'var(--text-xs)',color:'var(--color-muted-foreground)'}},'Will appear as brought-forward on next statement'):null;
       const actions=h('div',{style:{display:'flex',gap:'var(--space-2)'}});
       if(st.status==='draft'){
         actions.append(h('button',{className:'btn btn-sm btn-secondary',onClick:()=>{S.view='njStatement';S.njStatement.step='builder';S.njStatement.draftId=st.id;S.njStatement.month=njMonthKeyFromDate(st.statement_date||st.period_end);S.njStatement.hasGenerated=false;render();}},'Edit'));
@@ -2082,10 +2080,9 @@ function renderNJStatementHistory(){
       tb.append(h('tr',{},
         h('td',{},njStatementPeriodLabel(st)),
         h('td',{},st.generated_date||''),
-        h('td',{},statusLabel,unpaidFlag),
+        h('td',{},statusLabel),
         h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)'}},fmtMoney(parseFloat(st.total)||0)),
         h('td',{},refInput),
-        h('td',{style:{fontSize:'var(--text-sm)',color:'var(--color-muted-foreground)'}},cnLabel),
         h('td',{},actions),
       ));
     });
@@ -2116,14 +2113,30 @@ function njMonthEndDate(monthKey){ // 'YYYY-MM' -> 'YYYY-MM-DD' (last day of tha
 function njMonthKeyFromDate(dateISO){ // 'YYYY-MM-DD' -> 'YYYY-MM', falls back to previous calendar month
   return dateISO?dateISO.slice(0,7):njPrevMonthKey();
 }
-function njMonthOptions(){ // last 12 months including current, newest first
-  const opts=[];const now=new Date();
+// The month a fresh draft should default to: the month right after the most recently finalized
+// statement, not just "last calendar month" -- so a fresh build always lands on the correct next
+// open period even if several months have passed since the last statement (rather than tempting
+// you to manually pick an already-final one, which njMonthOptions() below no longer even lists).
+function njNextOpenMonth(){
+  const finals=(S.njStatements||[]).filter(s=>s.status==='final').sort((a,b)=>(b.statement_date||'').localeCompare(a.statement_date||''));
+  if(!finals.length)return njPrevMonthKey();
+  const lastMonth=njMonthKeyFromDate(finals[0].statement_date);
+  const[y,m]=lastMonth.split('-').map(Number);
+  const d=new Date(y,m,1); // month m (1-indexed) in 0-indexed Date() IS "next month"
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+}
+// Last 12 calendar months (relative to today) plus the correct next-open month if that falls
+// outside that window (e.g. catching up after a gap, or testing ahead of the real calendar),
+// excluding any month that already has a finalized statement -- a period can only ever be
+// finalized once. Without this exclusion, re-selecting an already-final month recomputes Opening
+// Balance against a historical cutoff that's no longer the right question to ask (the period's
+// own statement already answered it), producing a number that looks "stale" even though it's
+// technically correct for that specific past date.
+function njMonthOptions(){
   const names=['January','February','March','April','May','June','July','August','September','October','November','December'];
-  for(let i=0;i<12;i++){
-    const d=new Date(now.getFullYear(),now.getMonth()-i,1);
-    opts.push([d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'),names[d.getMonth()]+' '+d.getFullYear()]);
-  }
-  return opts;
+  const nextOpen=njNextOpenMonth();
+  const[y,m]=nextOpen.split('-').map(Number);
+  return[[nextOpen,names[m-1]+' '+y]];
 }
 function isoToLocalDate(iso){const[y,m,d]=iso.split('-').map(Number);return new Date(y,m-1,d);}
 function fmtDFromISO(iso){return iso?fmtD(isoToLocalDate(iso)):'';}
@@ -2194,55 +2207,64 @@ function njLinePool(){
     const attachedHere=draftId&&cn.nj_statement_id===draftId;
     const eligible=!cn.nj_statement_id;
     if(!attachedHere&&!eligible)return;
-    const src=S.njStatements.find(s=>s.id===cn.source_statement_id);
-    lines.push({type:'credit',key:cn.id,date:cn.issue_date||'',reference:'Credit note — '+njStatementPeriodLabel(src),
+    const src=S.njPayments.find(p=>p.id===cn.source_payment_id);
+    lines.push({type:'credit',key:cn.id,date:cn.issue_date||'',reference:'Credit note — Payment'+(src?' '+fmtDFromISO(src.received_date):''),
       subCustomer:'',
       subtotal:-(parseFloat(cn.subtotal)||0),gst:-(parseFloat(cn.gst)||0),amount:-(parseFloat(cn.total)||0),
       checked:!b.excludedCreditNoteIds.has(cn.id)});
   });
-  // Whether a carried_statement_id-referencing line (brought_forward/payment -- neither has its
-  // own row to null out like tax_invoices/credit_notes do) already exists on some OTHER
-  // statement. Must exclude lines belonging to a void statement -- voidNJStatement() releases
-  // tax invoices/credit notes by nulling their own nj_statement_id, but never deletes the
-  // nj_statement_lines rows themselves, so a stale line would otherwise wrongly look "swept".
-  const sweptElsewhere=(lineType,sourceId)=>S.njStatementLines.some(l=>{
-    if(l.line_type!==lineType||l.carried_statement_id!==sourceId||l.statement_id===draftId)return false;
-    const owner=S.njStatements.find(s=>s.id===l.statement_id);
-    return !!owner&&owner.status!=='void';
-  });
-  // Opening balance -- every final statement's total carries forward as owed, whether or not
-  // it's since been paid. Marking it Paid doesn't remove the debt from the ledger by itself;
-  // it's the payment line below (and the existing credit line, generated at Mark as Paid time)
-  // that reduce it back toward zero on whichever statement actually includes them.
-  (S.njStatements||[]).forEach(st=>{
-    if(st.id===draftId||st.status!=='final')return;
-    if(sweptElsewhere('brought_forward',st.id))return;
-    lines.push({type:'brought_forward',key:st.id,date:st.generated_date||'',reference:'Opening balance — '+njStatementPeriodLabel(st),
+  // Payments -- same "first presented" gating as invoices/credit notes above. A payment can
+  // reconcile invoices from any prior period (it's a bank-reconciliation-style tick-off, not
+  // scoped to one statement), but the PAYMENT ROW ITSELF still only ever appears as a "new line"
+  // once, on whichever statement is built next after it was recorded.
+  (S.njPayments||[]).forEach(p=>{
+    if(p.status!=='active')return;
+    if(p.received_date&&p.received_date>cutoff)return;
+    const attachedHere=draftId&&p.nj_statement_id===draftId;
+    const eligible=!p.nj_statement_id;
+    if(!attachedHere&&!eligible)return;
+    lines.push({type:'payment',key:p.id,date:p.received_date||'',reference:'Payment received'+(p.reference?' — '+p.reference:''),
       subCustomer:'',
-      subtotal:parseFloat(st.subtotal)||0,gst:parseFloat(st.gst)||0,amount:parseFloat(st.total)||0,
-      checked:!b.excludedCarriedStatementIds.has(st.id)});
-  });
-  // Payments -- the actual cash received when a statement was marked Paid (statement total
-  // minus the 8.5% commission already reflected in its own credit note, so the two net to the
-  // statement's full amount once both are swept in alongside its opening balance above).
-  // Also excludes any statement whose own debt was itself absorbed into a LATER statement via
-  // brought-forward -- e.g. statement A gets carried forward into statement B, and *both* A and
-  // B later get marked Paid independently (the recursive cascade in markNJStatementPaid() does
-  // exactly this). Without this check, A's payment would be swept in a second time even though
-  // its balance is already fully represented by B's own opening-balance/payment/credit lines --
-  // double-counting the same underlying debt.
-  (S.njStatements||[]).forEach(st=>{
-    if(st.id===draftId||st.status!=='final'||!st.paid_date)return;
-    if(sweptElsewhere('payment',st.id)||sweptElsewhere('brought_forward',st.id))return;
-    const cn=S.njCreditNotes.find(c=>c.source_statement_id===st.id);
-    const stTotal=parseFloat(st.total)||0;
-    const paymentAmount=cn?(stTotal-(parseFloat(cn.total)||0)):stTotal; // fall back to full total if no credit note exists yet
-    lines.push({type:'payment',key:st.id,date:st.paid_date,reference:'Payment received — '+njStatementPeriodLabel(st),
-      subCustomer:'',
-      subtotal:-paymentAmount,gst:0,amount:-paymentAmount,
-      checked:!b.excludedPaymentIds.has(st.id)});
+      subtotal:-(parseFloat(p.amount)||0),gst:0,amount:-(parseFloat(p.amount)||0),
+      checked:!b.excludedPaymentIds.has(p.id)});
   });
   return lines;
+}
+
+// Month key before an arbitrary month key (njPrevMonthKey() only computes "the month before
+// today") -- used to find the cutoff date for a statement's opening balance.
+function njPrevMonthKeyOf(monthKey){
+  const[y,m]=monthKey.split('-').map(Number);
+  const d=new Date(y,m-2,1);
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+}
+
+// Live balance across every currently-unpaid, already-presented NJ tax invoice as of a given
+// cutoff date -- always a fresh sum over individual invoice facts, never read from a stored
+// total. This is the core fix for the old carry-forward bug: nothing here trusts another
+// statement's cached number. Callers freeze the result at save time for their own historical
+// reprint (see saveNJDraft()), but never read a DIFFERENT statement's frozen result as input.
+function njCurrentBalance(asOfDateISO){
+  const nj=njRetailer();
+  const asOf=asOfDateISO||todayISO();
+  const asOfLocal=isoToLocalDate(asOf);
+  // "Unpaid as of asOf" -- not just "unpaid, period". A payment recorded AFTER asOf must not
+  // retroactively shrink a historical cutoff's balance (e.g. an opening-balance snapshot for a
+  // past month-end), or two different asOf dates computed at the same moment can silently
+  // double-subtract the same payment. Both callers below are asOf-aware for exactly this reason.
+  const unpaid=(S.taxInvoices||[]).filter(ti=>nj&&ti.retailer_id===nj.id&&ti.status==='active'&&(!ti.paid_date||ti.paid_date>asOf)&&ti.nj_statement_id&&ti.issue_date&&ti.issue_date<=asOf);
+  const buckets={current:0,d30:0,d60:0,d90:0};
+  let total=0;
+  unpaid.forEach(ti=>{
+    const amt=njTaxInvoiceAmount(ti).total;
+    total+=amt;
+    const ageDays=Math.floor((asOfLocal-isoToLocalDate(ti.issue_date))/86400000);
+    if(ageDays<=30)buckets.current+=amt;
+    else if(ageDays<=60)buckets.d30+=amt;
+    else if(ageDays<=90)buckets.d60+=amt;
+    else buckets.d90+=amt;
+  });
+  return{total,buckets};
 }
 
 // Persists the current checked selection: creates the draft row if needed, releases anything
@@ -2265,6 +2287,9 @@ async function saveNJDraft(){
   for(const cn of S.njCreditNotes.filter(c=>c.nj_statement_id===draftId)){
     await sbUpdate('nj_credit_notes',cn.id,{nj_statement_id:null});
   }
+  for(const p of S.njPayments.filter(x=>x.nj_statement_id===draftId)){
+    await sbUpdate('nj_payments',p.id,{nj_statement_id:null});
+  }
   for(const line of S.njStatementLines.filter(l=>l.statement_id===draftId)){
     await sbDelete('nj_statement_lines',line.id);
   }
@@ -2275,19 +2300,38 @@ async function saveNJDraft(){
     if(l.date)dates.push(l.date);
     if(l.type==='invoice'){
       await sbUpdate('tax_invoices',l.key,{nj_statement_id:draftId});
-      await sbInsert('nj_statement_lines',{id:gid(),statement_id:draftId,line_type:'invoice',tax_invoice_id:l.key,credit_note_id:null,carried_statement_id:null,sub_customer_name:l.subCustomer,amount:l.amount});
+      // Keep local state in sync immediately -- the aging snapshot below runs before loadAll()
+      // refreshes S.taxInvoices, and needs to see THIS period's own newly-attached invoices as
+      // already "presented" or they'd be silently missing from the closing balance it freezes.
+      const ti=S.taxInvoices.find(t=>t.id===l.key);if(ti)ti.nj_statement_id=draftId;
+      await sbInsert('nj_statement_lines',{id:gid(),statement_id:draftId,line_type:'invoice',tax_invoice_id:l.key,credit_note_id:null,payment_id:null,sub_customer_name:l.subCustomer,amount:l.amount});
     }else if(l.type==='credit'){
       await sbUpdate('nj_credit_notes',l.key,{nj_statement_id:draftId});
-      await sbInsert('nj_statement_lines',{id:gid(),statement_id:draftId,line_type:'credit',tax_invoice_id:null,credit_note_id:l.key,carried_statement_id:null,sub_customer_name:'',amount:l.amount});
-    }else if(l.type==='brought_forward'){
-      await sbInsert('nj_statement_lines',{id:gid(),statement_id:draftId,line_type:'brought_forward',tax_invoice_id:null,credit_note_id:null,carried_statement_id:l.key,sub_customer_name:'',amount:l.amount});
+      await sbInsert('nj_statement_lines',{id:gid(),statement_id:draftId,line_type:'credit',tax_invoice_id:null,credit_note_id:l.key,payment_id:null,sub_customer_name:'',amount:l.amount});
     }else if(l.type==='payment'){
-      await sbInsert('nj_statement_lines',{id:gid(),statement_id:draftId,line_type:'payment',tax_invoice_id:null,credit_note_id:null,carried_statement_id:l.key,sub_customer_name:'',amount:l.amount});
+      await sbUpdate('nj_payments',l.key,{nj_statement_id:draftId});
+      await sbInsert('nj_statement_lines',{id:gid(),statement_id:draftId,line_type:'payment',tax_invoice_id:null,credit_note_id:null,payment_id:l.key,sub_customer_name:'',amount:l.amount});
     }
   }
   dates.sort();
+  // Opening balance + aging are frozen HERE, at save time, from a live computation over
+  // tax_invoices -- never read from another statement's stored total (that chain-of-trust was
+  // the original bug). This statement's own frozen numbers are safe to reprint later precisely
+  // because nothing downstream ever reads them back in as an input to a DIFFERENT statement's
+  // calculation -- the next statement always recomputes its own opening balance fresh.
+  // Two different cutoffs, deliberately: Opening Balance is "as of the START of this period"
+  // (excludes this period's own new invoices/payments/credits by construction, since njCurrentBalance
+  // is now asOf-aware -- see its own comment). The aging breakdown is "as of THIS statement's own
+  // date" -- the true current/closing balance, including this period's new invoices, which is why
+  // it must run AFTER the local nj_statement_id patch above.
+  const openingCutoff=njMonthEndDate(njPrevMonthKeyOf(b.month));
+  const stmtCutoff=njMonthEndDate(b.month);
+  const opening_balance=njCurrentBalance(openingCutoff).total;
+  const buckets=njCurrentBalance(stmtCutoff).buckets;
   await sbUpdate('nj_statements',draftId,{
     subtotal,gst,total,
+    opening_balance,
+    aging_current:buckets.current,aging_30:buckets.d30,aging_60:buckets.d60,aging_90:buckets.d90,
     statement_date:njMonthEndDate(b.month), // keeps an existing draft's date in sync if the Month selector was changed
     period_start:dates[0]||null,
     period_end:dates[dates.length-1]||null,
@@ -2303,7 +2347,8 @@ async function saveNJDraft(){
 // regardless of gabrielle_pct), and only flips status_id to Billed when paula_billed is
 // already, genuinely true -- deliberately not reusing the shared "otherHasNoWork" shortcut
 // that renderBillingStep4()/the manual billing toggle use, since that's wrong for combined
-// billing. Credit-note generation happens later, on Mark as Paid -- not here.
+// billing. Payment reconciliation (and credit-note generation) is a separate, independent
+// action -- see recordNJPayment() -- not tied to finalizing any particular statement.
 async function finalizeNJStatement(){
   const b=S.njStatement;
   await saveNJDraft();
@@ -2327,7 +2372,7 @@ async function finalizeNJStatement(){
   }
   await sbUpdate('nj_statements',draftId,{status:'final'});
   b.draftId=null;
-  b.excludedTaxInvoiceIds=new Set();b.excludedCreditNoteIds=new Set();b.excludedCarriedStatementIds=new Set();b.excludedPaymentIds=new Set();
+  b.excludedTaxInvoiceIds=new Set();b.excludedCreditNoteIds=new Set();b.excludedPaymentIds=new Set();
   await loadAll();
 }
 
@@ -2344,22 +2389,22 @@ function printStatement(statementId,existingWin){
   if(!st)return;
   const lines=S.njStatementLines.filter(l=>l.statement_id===statementId);
   const nj=njRetailer();
-  const fmtN=n=>n.toFixed(2);
+  const fmtN=n=>n.toLocaleString('en-NZ',{minimumFractionDigits:2,maximumFractionDigits:2});
   const fmtSigned=n=>(n<0?'(':'')+fmtN(Math.abs(n))+(n<0?')':'');
   // statement_date is the month-end this statement covers (set via the builder's Month
   // selector). Falls back to period_end/today for statements saved before that field existed.
   const stmtDateISO=st.statement_date||st.period_end||todayISO();
-  // Invoices/credits/opening-balance amounts go in "Total Amount" (credits negative, in
-  // brackets). Payments go in their own "Total Paid" column, shown as a plain positive figure.
-  // Balance Due is a running total down the dated rows (net signed amount either way) -- same
-  // net figures the aging summary below buckets by age against stmtDateISO.
+  // Invoices/credits amounts go in "Total Amount" (credits negative, in brackets). Payments go
+  // in their own "Total Paid" column, shown as a plain positive figure. The running Balance Due
+  // column starts from this statement's own FROZEN opening_balance (set at save time from a live
+  // computation -- see saveNJDraft()), not zero, so it reads as a true running account balance.
   const rowsData=lines.map(l=>{
     let dateISO='',invoiceNo='',description='',amountCol=0,paidCol=0;
     const amt=parseFloat(l.amount)||0;
     if(l.line_type==='invoice'){
       const ti=S.taxInvoices.find(t=>t.id===l.tax_invoice_id);
       dateISO=ti?ti.issue_date:'';invoiceNo=ti?(ti.invoice_number||ti.id):'';
-      description='Valuations'+(l.sub_customer_name?' — '+l.sub_customer_name:'');
+      description=l.sub_customer_name||'';
       amountCol=amt;
     }else if(l.line_type==='credit'){
       const cn=S.njCreditNotes.find(c=>c.id===l.credit_note_id);
@@ -2370,37 +2415,49 @@ function printStatement(statementId,existingWin){
       description='Credit note';
       amountCol=amt; // already negative
     }else if(l.line_type==='payment'){
-      const src=S.njStatements.find(s=>s.id===l.carried_statement_id);
-      dateISO=src?src.paid_date:'';
-      description='Payment received — '+njStatementPeriodLabel(src);
+      const p=S.njPayments.find(x=>x.id===l.payment_id);
+      dateISO=p?p.received_date:'';
+      description='Payment received'+(p&&p.reference?' — '+p.reference:'');
       paidCol=-amt; // amt is stored negative (reduces balance); shown here as a plain positive amount paid
-    }else{
-      const src=S.njStatements.find(s=>s.id===l.carried_statement_id);
-      dateISO=(src&&src.generated_date)||st.generated_date||'';
-      description='Opening balance — '+njStatementPeriodLabel(src);
-      amountCol=amt;
     }
     return{dateISO,invoiceNo,description,amountCol,paidCol,net:amt};
   }).sort((a,b)=>(a.dateISO||'').localeCompare(b.dateISO||''));
-  let running=0;
-  const rowsHtml=rowsData.map(r=>{
+  let running=parseFloat(st.opening_balance)||0;
+  const openingRowHtml=`<tr><td></td><td></td><td>Opening balance</td><td></td><td></td><td style="text-align:right">${fmtSigned(running)}</td></tr>`;
+  const rowsHtml=openingRowHtml+rowsData.map(r=>{
     running+=r.net;
     return `<tr><td>${fmtDFromISO(r.dateISO)}</td><td>${r.invoiceNo}</td><td>${r.description}</td><td style="text-align:right">${r.amountCol?fmtSigned(r.amountCol):''}</td><td style="text-align:right">${r.paidCol?fmtN(r.paidCol):''}</td><td style="text-align:right">${fmtSigned(running)}</td></tr>`;
   }).join('');
-  // Aging: each row's own net amount bucketed by how old it is relative to the statement date --
-  // not the running balance. A brought-forward/payment line naturally lands in an older bucket
-  // since its date traces back to the prior statement, not this month's.
-  const stmtLocalDate=isoToLocalDate(stmtDateISO);
-  const buckets={current:0,d30:0,d60:0,d90:0};
-  rowsData.forEach(r=>{
-    if(!r.dateISO)return;
-    const ageDays=Math.floor((stmtLocalDate-isoToLocalDate(r.dateISO))/86400000);
-    if(ageDays<=30)buckets.current+=r.net;
-    else if(ageDays<=60)buckets.d30+=r.net;
-    else if(ageDays<=90)buckets.d60+=r.net;
-    else buckets.d90+=r.net;
-  });
-  const balanceDue=buckets.current+buckets.d30+buckets.d60+buckets.d90;
+  // Aging summary reads this statement's own FROZEN buckets (set at save time) rather than
+  // recomputing live -- reprinting an old statement shows the numbers as they were when
+  // generated, not today's live balance.
+  const buckets={current:parseFloat(st.aging_current)||0,d30:parseFloat(st.aging_30)||0,d60:parseFloat(st.aging_60)||0,d90:parseFloat(st.aging_90)||0};
+  const balanceDue=(parseFloat(st.opening_balance)||0)+(parseFloat(st.total)||0);
+  // Subtotal/GST/Total Debits reflect NEW INVOICES ONLY -- st.subtotal/st.gst blend invoices with
+  // credit/payment lines, which reads as nonsensical on a formal statement (e.g. a negative
+  // subtotal next to a large positive balance due). Recomputed here per-invoice-line rather than
+  // read from the frozen blended fields. Credits/payments are shown as one gross "Total Credits"
+  // line instead -- standard statement practice, and their own GST split isn't meaningful at
+  // this summary level (the payment already nets against specific invoices shown above).
+  const invoiceLines=lines.filter(l=>l.line_type==='invoice');
+  const invoiceAmounts=invoiceLines.map(l=>{const ti=S.taxInvoices.find(t=>t.id===l.tax_invoice_id);return ti?njTaxInvoiceAmount(ti):{subtotal:0,gst:0,total:0};});
+  const invoiceSubtotal=invoiceAmounts.reduce((s,a)=>s+a.subtotal,0);
+  const invoiceGst=invoiceAmounts.reduce((s,a)=>s+a.gst,0);
+  const invoiceTotal=invoiceAmounts.reduce((s,a)=>s+a.total,0);
+  const creditsAndPayments=lines.filter(l=>l.line_type!=='invoice').reduce((s,l)=>s+(parseFloat(l.amount)||0),0);
+  // Build the summary as two groups -- "debits" (invoice subtotal/GST/total, plus Total Credits
+  // if any) and "aging" (hides zero-balance rows to save room) -- with a divider between them.
+  const debitRows=[
+    ['Subtotal (excl GST)',fmtSigned(invoiceSubtotal)],
+    ['GST',fmtSigned(invoiceGst)],
+    ['Total Debits',fmtSigned(invoiceTotal)],
+  ];
+  if(Math.abs(creditsAndPayments)>0.004)debitRows.push(['Total Credits',fmtN(Math.abs(creditsAndPayments))]);
+  const agingRows=[['Current',buckets.current],['30 days',buckets.d30],['60 days',buckets.d60],['90 days',buckets.d90]]
+    .filter(([,amt])=>Math.abs(amt)>0.004) // hide zero-balance aging rows to save room -- Nationwide rarely ages anything
+    .map(([label,amt])=>[label,fmtSigned(amt)]);
+  const rowHtml=([label,val],divider)=>`<tr><td${divider?' style="border-bottom:1px solid #ddd;padding-bottom:8px;"':''}>${label}</td><td style="text-align:right${divider?';border-bottom:1px solid #ddd;padding-bottom:8px':''}">$${val}</td></tr>`;
+  const summaryRowsHtml=debitRows.map((row,idx)=>rowHtml(row,idx===debitRows.length-1)).join('')+agingRows.map(row=>rowHtml(row,false)).join('');
   const win=existingWin||window.open('','_blank','width=800,height=900');
   if(!win){showToast('Pop-up blocked — allow pop-ups for this site and try again',true);return;}
   win.document.write(`<!DOCTYPE html><html><head><title>PGL Appraisals Statement ${fmtDFromISO(stmtDateISO)}</title>
@@ -2450,15 +2507,12 @@ td:last-child{text-align:right;}
   ${st.accounting_ref?`<span class="key">Accounting ref</span><span>${st.accounting_ref}</span>`:''}
 </div>
 <table>
-<thead><tr><th>Issued Date</th><th>Invoice No</th><th>Description</th><th>Total Amount ($)</th><th>Total Paid ($)</th><th>Balance Due ($)</th></tr></thead>
+<thead><tr><th>Issued Date</th><th>Invoice No</th><th>Description</th><th style="text-align:right">Total Amount ($)</th><th style="text-align:right">Total Paid ($)</th><th style="text-align:right">Balance Due ($)</th></tr></thead>
 <tbody>${rowsHtml}</tbody>
 </table>
 <table class="aging-table">
 <tbody>
-<tr><td>Current</td><td style="text-align:right">$${fmtSigned(buckets.current)}</td></tr>
-<tr><td>30 days</td><td style="text-align:right">$${fmtSigned(buckets.d30)}</td></tr>
-<tr><td>60 days</td><td style="text-align:right">$${fmtSigned(buckets.d60)}</td></tr>
-<tr><td>90 days</td><td style="text-align:right">$${fmtSigned(buckets.d90)}</td></tr>
+${summaryRowsHtml}
 </tbody>
 <tfoot><tr class="total-row"><td><strong>Balance due</strong></td><td><strong>$${fmtSigned(balanceDue)}</strong></td></tr></tfoot>
 </table>
@@ -2475,8 +2529,8 @@ td:last-child{text-align:right;}
 
 function renderNJStatementBuilder(){
   const b=S.njStatement;
-  if(!b.month)b.month=njPrevMonthKey(); // defensive default -- both entry points already set this
-  const lines=njLinePool();
+  if(!b.month)b.month=njNextOpenMonth(); // defensive default -- both entry points already set this
+  const lines=njLinePool().sort((l1,l2)=>(l1.date||'').localeCompare(l2.date||'')); // oldest to newest, matching the order they'll print on the statement
   const c=h('div',{});
   c.append(h('div',{className:'dash-header'},
     h('div',{},h('h1',{className:'dash-greeting',style:{fontSize:'24px'}},'NJ Statement — Draft'),h('p',{className:'dash-date'},'Review what\'s included, then save or finalize')),
@@ -2495,6 +2549,16 @@ function renderNJStatementBuilder(){
   });
   c.append(fld('Month',monthSel,{marginBottom:'var(--space-4)'}));
 
+  // Opening Balance is a live figure (recomputed fresh every render, not stored) -- it's what
+  // gets FROZEN onto this statement at Save Draft time (see saveNJDraft()), but here on the
+  // builder it always reflects the current, real-time state so it can't go stale between saves.
+  const openingCutoff=njMonthEndDate(njPrevMonthKeyOf(b.month));
+  const opening=njCurrentBalance(openingCutoff);
+  c.append(h('div',{style:{display:'flex',justifyContent:'space-between',padding:'var(--space-3) var(--space-4)',background:'var(--color-secondary)',borderRadius:'var(--radius-md)',marginBottom:'var(--space-4)'}},
+    h('span',{},'Opening balance (as of '+fmtDFromISO(openingCutoff)+')'),
+    h('span',{style:{fontFamily:'var(--font-mono)',fontWeight:'var(--font-semibold)'}},fmtMoney(opening.total)),
+  ));
+
   if(!lines.length){
     c.append(h('div',{className:'empty-state'},h('div',{className:'empty-state-title'},'Nothing eligible right now'),h('div',{className:'empty-state-hint'},'Ship and invoice some Nationwide packets first — they\'ll appear here automatically.')));
   }else{
@@ -2509,22 +2573,21 @@ function renderNJStatementBuilder(){
       h('th',{className:'table-header',style:{textAlign:'right'}},'Amount ($)'),
     )));
     const tb=h('tbody',{});
-    const typeLabel={invoice:'Invoice',credit:'Credit',brought_forward:'Opening Balance',payment:'Payment'};
+    const typeLabel={invoice:'Invoice',credit:'Credit',payment:'Payment'};
     lines.forEach(l=>{
       const cb=h('input',{type:'checkbox'});
       cb.checked=l.checked;
       cb.addEventListener('change',()=>{
-        const setKey=l.type==='invoice'?'excludedTaxInvoiceIds':l.type==='credit'?'excludedCreditNoteIds':l.type==='payment'?'excludedPaymentIds':'excludedCarriedStatementIds';
+        const setKey=l.type==='invoice'?'excludedTaxInvoiceIds':l.type==='credit'?'excludedCreditNoteIds':'excludedPaymentIds';
         b[setKey][cb.checked?'delete':'add'](l.key);
         b.hasGenerated=false; // selection changed -- any previous printout is now stale, must regenerate before finalizing
         render();
       });
       const rowStyle={};
       if(l.type==='credit'||l.type==='payment')rowStyle.color='var(--color-muted-foreground)';
-      if(l.type==='brought_forward')rowStyle.fontWeight='var(--font-semibold)';
 
-      // Only invoice lines expand to show their packets -- credit/brought-forward lines have
-      // none. Expand toggle sits next to the "Invoice" label itself rather than as a separate
+      // Only invoice lines expand to show their packets -- credit/payment lines have none.
+      // Expand toggle sits next to the "Invoice" label itself rather than as a separate
       // leading column, so there's only one interactive element on the left (the checkbox).
       let typeCell,detailRows=[];
       if(l.type==='invoice'){
@@ -2567,12 +2630,21 @@ function renderNJStatementBuilder(){
   }
 
   const checked=lines.filter(l=>l.checked);
-  const subtotal=checked.reduce((s,l)=>s+l.subtotal,0);
-  const gst=checked.reduce((s,l)=>s+l.gst,0);
-  const total=checked.reduce((s,l)=>s+l.amount,0);
+  // Split new-invoice figures from credit/payment figures rather than netting them into one
+  // blended (and confusing) Subtotal/GST/Total -- invoices get their own ex-GST/GST/total
+  // breakdown; credits and payments are shown as a single gross reduction line (their own GST
+  // split isn't meaningful at this summary level).
+  const invoiceLines=checked.filter(l=>l.type==='invoice');
+  const creditPaymentLines=checked.filter(l=>l.type!=='invoice');
+  const subtotal=invoiceLines.reduce((s,l)=>s+l.subtotal,0);
+  const gst=invoiceLines.reduce((s,l)=>s+l.gst,0);
+  const invoiceTotal=invoiceLines.reduce((s,l)=>s+l.amount,0);
+  const creditsAndPayments=creditPaymentLines.reduce((s,l)=>s+l.amount,0);
+  const closingBalance=opening.total+invoiceTotal+creditsAndPayments;
   const totals=h('div',{style:{marginTop:'var(--space-4)',maxWidth:'320px',marginLeft:'auto'}});
-  [['Subtotal',subtotal],['GST',gst],['Total',total]].forEach(([lbl,val],idx)=>{
-    totals.append(h('div',{style:{display:'flex',justifyContent:'space-between',padding:'var(--space-2) 0',fontWeight:idx===2?'var(--font-bold)':'var(--font-normal)',borderTop:idx===2?'1px solid var(--color-border)':'none'}},
+  [['Subtotal (new invoices)',subtotal],['GST',gst],['Total (new invoices)',invoiceTotal],['Payments / Credits',creditsAndPayments],['Closing balance',closingBalance]].forEach(([lbl,val],idx,arr)=>{
+    const isLast=idx===arr.length-1;
+    totals.append(h('div',{style:{display:'flex',justifyContent:'space-between',padding:'var(--space-2) 0',fontWeight:isLast?'var(--font-bold)':'var(--font-normal)',borderTop:isLast?'1px solid var(--color-border)':'none'}},
       h('span',{},lbl),h('span',{style:{fontFamily:'var(--font-mono)'}},fmtMoney(val)),
     ));
   });
@@ -2678,7 +2750,7 @@ function showNJVoidStartOverConfirm(){
     try{
       await voidNJStatement(draftId);
       S.njStatement.draftId=null;S.njStatement.hasGenerated=false;
-      S.njStatement.excludedTaxInvoiceIds=new Set();S.njStatement.excludedCreditNoteIds=new Set();S.njStatement.excludedCarriedStatementIds=new Set();S.njStatement.excludedPaymentIds=new Set();
+      S.njStatement.excludedTaxInvoiceIds=new Set();S.njStatement.excludedCreditNoteIds=new Set();S.njStatement.excludedPaymentIds=new Set();
       overlay.remove();showToast('Statement voided');render();
     }
     catch(e){showToast('Error: '+e.message,true);voidBtn.disabled=false;voidBtn.textContent='Void';}
@@ -3898,7 +3970,7 @@ function printInvoice(packets,retailerId,subCust,invoiceNum,shipDate,shippingCos
   const subtotal=valuationsTotal+shippingExGST;
   const gst=subtotal*gstRate;
   const amountDue=subtotal+gst;
-  const fmtN=n=>n.toFixed(2);
+  const fmtN=n=>n.toLocaleString('en-NZ',{minimumFractionDigits:2,maximumFractionDigits:2});
   const issuedStr=new Date(shipDate+'T00:00:00').toLocaleDateString('en-NZ',{day:'numeric',month:'long',year:'numeric'});
   const rowsHtml=rows.map(r=>`<tr><td>${r.ref} — ${r.surname||''} (${r.itemCount} item${r.itemCount!==1?'s':''})</td><td>1</td><td style="text-align:right">${fmtN(r.amount)}</td><td style="text-align:right">${fmtN(r.amount)}</td></tr>`).join('');
   const shippingRow=shippingStored>0?`<tr><td>Shipping</td><td>1</td><td style="text-align:right">${fmtN(shippingExGST)}</td><td style="text-align:right">${fmtN(shippingExGST)}</td></tr>`:'';
@@ -4204,50 +4276,57 @@ function openShipmentModal(filteredPackets){
 // GST-inclusive total, dated for the following month, carrying GST symmetrically), then
 // cascades to any earlier unpaid statement this one absorbed via a brought-forward line --
 // recursive, so a multi-hop chain resolves in one click.
-async function markNJStatementPaid(statementId){
-  const st=S.njStatements.find(s=>s.id===statementId);
-  if(!st||st.status!=='final'||st.paid_date)return;
-  const paidDate=todayISO();
-  await sbUpdate('nj_statements',statementId,{paid_date:paidDate});
-
-  const total=(parseFloat(st.total)||0)*0.085;
-  const gabby=S.users.find(u=>u.slug==='gabby')||{gst_registered:true,gst_rate:15};
-  const gstRate=gabby.gst_registered?(gabby.gst_rate||15)/100:0;
-  const subtotal=total/(1+gstRate);
-  const gst=total-subtotal;
-  // Pure string/local-date arithmetic -- avoids the Date/toISOString() UTC round-trip shifting
-  // the calendar date by a day depending on the browser's local timezone. Day is clamped to the
-  // last valid day of the target month -- paying on the 29th-31st (e.g. Jan 31) would otherwise
-  // produce a non-existent date like "2026-02-31", which compares wrong as a plain string and
-  // silently rolls forward a month if anything ever parses it with `new Date(...)`.
-  const issueDate=(()=>{
-    const[y,m,d]=paidDate.split('-').map(Number);
-    const nm=m===12?1:m+1;
-    const ny=m===12?y+1:y;
-    const lastDayOfNextMonth=new Date(ny,nm,0).getDate();
-    const clampedDay=Math.min(d,lastDayOfNextMonth);
-    return ny+'-'+String(nm).padStart(2,'0')+'-'+String(clampedDay).padStart(2,'0');
-  })();
-  await sbInsert('nj_credit_notes',{id:gid(),source_statement_id:statementId,nj_statement_id:null,accounting_ref:null,subtotal,gst,total,issue_date:issueDate,status:'draft',created:fmtD(new Date())});
-
-  const carriedLines=S.njStatementLines.filter(l=>l.statement_id===statementId&&l.line_type==='brought_forward');
-  for(const line of carriedLines){
-    if(line.carried_statement_id)await markNJStatementPaid(line.carried_statement_id);
+// Records a real, reconciled payment: stores it as its own entity, marks every ticked invoice
+// paid, and auto-generates a credit note for whatever the ticked total and the actual payment
+// amount don't agree on (Nationwide's ~8.5% commission, but driven by the real numbers rather
+// than a fixed rate). Not tied to any particular statement -- invoiceIds can span any prior
+// period, matching real bank reconciliation. Credit note is dated the same day as the payment,
+// per Gabby, so it appears as a new line alongside the payment on whichever statement is next.
+async function recordNJPayment(amount,receivedDate,reference,invoiceIds){
+  const paymentId=gid();
+  const now=fmtD(new Date());
+  await sbInsert('nj_payments',{id:paymentId,amount,received_date:receivedDate,reference:reference||null,nj_statement_id:null,status:'active',created:now});
+  const tickedTotal=invoiceIds.reduce((s,id)=>{
+    const ti=S.taxInvoices.find(t=>t.id===id);
+    return ti?s+njTaxInvoiceAmount(ti).total:s;
+  },0);
+  for(const id of invoiceIds){
+    await sbUpdate('tax_invoices',id,{paid_date:receivedDate,paid_via_payment_id:paymentId});
+  }
+  const creditAmount=tickedTotal-amount;
+  if(Math.abs(creditAmount)>0.01){
+    const gabby=S.users.find(u=>u.slug==='gabby')||{gst_registered:true,gst_rate:15};
+    const gstRate=gabby.gst_registered?(gabby.gst_rate||15)/100:0;
+    const subtotal=creditAmount/(1+gstRate);
+    const gst=creditAmount-subtotal;
+    await sbInsert('nj_credit_notes',{id:gid(),source_payment_id:paymentId,nj_statement_id:null,accounting_ref:null,subtotal,gst,total:creditAmount,issue_date:receivedDate,status:'draft',created:now});
   }
   await loadAll();
 }
 
-// Voids a statement: releases its tax invoices and credit-note lines back to the eligible
-// pool, reverts the packets it billed, and un-cascades any brought-forward chain it resolved.
-// Refuses (rather than guessing) if this statement's own credit note has already been used
-// on a later statement -- unwinding that safely isn't implemented; see plan's flagged gap.
+// Reverses a payment: un-pays whatever invoices it settled and voids its credit note. No
+// "used elsewhere" refusal needed (unlike voidNJStatement below) -- a payment doesn't cascade
+// into packet billing or any other entity, so releasing it is always safe.
+async function voidNJPayment(paymentId){
+  const p=S.njPayments.find(x=>x.id===paymentId);
+  if(!p||p.status==='void')return;
+  const invoices=S.taxInvoices.filter(ti=>ti.paid_via_payment_id===paymentId);
+  for(const ti of invoices){
+    await sbUpdate('tax_invoices',ti.id,{paid_date:null,paid_via_payment_id:null});
+  }
+  const cn=S.njCreditNotes.find(c=>c.source_payment_id===paymentId);
+  if(cn)await sbUpdate('nj_credit_notes',cn.id,{status:'void'});
+  await sbUpdate('nj_payments',paymentId,{status:'void'});
+  await loadAll();
+}
+
+// Voids a statement: releases its invoice/credit/payment lines back to the eligible pool and
+// reverts the packets it billed. Simpler than the old version -- payment reconciliation is now
+// independent of statement lifecycle, so there's no brought-forward chain or credit-note
+// cross-statement dependency left to un-cascade.
 async function voidNJStatement(statementId){
   const st=S.njStatements.find(s=>s.id===statementId);
   if(!st||st.status==='void')return;
-  const ownCreditNote=S.njCreditNotes.find(c=>c.source_statement_id===statementId);
-  if(ownCreditNote&&ownCreditNote.nj_statement_id){
-    throw new Error('Cannot void: its credit note has already been used on another statement. Void that statement first.');
-  }
   const lines=S.njStatementLines.filter(l=>l.statement_id===statementId);
   const now=fmtD(new Date());
   const pktIdsSeen=new Set();
@@ -4267,16 +4346,10 @@ async function voidNJStatement(statementId){
   for(const line of lines.filter(l=>l.line_type==='credit')){
     await sbUpdate('nj_credit_notes',line.credit_note_id,{nj_statement_id:null});
   }
-  for(const line of lines.filter(l=>l.line_type==='brought_forward')){
-    const src=S.njStatements.find(s=>s.id===line.carried_statement_id);
-    if(src&&st.paid_date&&src.paid_date){
-      await sbUpdate('nj_statements',src.id,{paid_date:null});
-      const srcCn=S.njCreditNotes.find(c=>c.source_statement_id===src.id);
-      if(srcCn&&!srcCn.nj_statement_id)await sbUpdate('nj_credit_notes',srcCn.id,{status:'void'});
-    }
+  for(const line of lines.filter(l=>l.line_type==='payment')){
+    await sbUpdate('nj_payments',line.payment_id,{nj_statement_id:null});
   }
-  if(ownCreditNote)await sbUpdate('nj_credit_notes',ownCreditNote.id,{status:'void'});
-  await sbUpdate('nj_statements',statementId,{status:'void',paid_date:null});
+  await sbUpdate('nj_statements',statementId,{status:'void'});
   await loadAll();
 }
 
@@ -4312,11 +4385,13 @@ function showVoidNJStatementConfirm(statementId){
   document.body.append(overlay);
 }
 
+// Statement-level Admin card -- Void only. Payment reconciliation now lives entirely under
+// njPaymentsCard() below, independent of any particular statement's lifecycle.
 function njReconciliationCard(){
   const card=h('div',{style:{background:'var(--color-card)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'var(--space-6)',marginBottom:'var(--space-5)'}});
-  card.append(h('h2',{style:{fontSize:'var(--text-lg)',fontWeight:'var(--font-semibold)',margin:'0 0 var(--space-2)'}},'NJ Statement Reconciliation'));
-  card.append(h('p',{style:{fontSize:'var(--text-sm)',color:'var(--color-muted-foreground)',margin:'0 0 var(--space-4)'}},'Mark statements as paid once Nationwide\'s remittance arrives, or void one to correct a mistake.'));
-  const finals=S.njStatements.filter(s=>s.status==='final').sort((a,b)=>(a.paid_date?1:0)-(b.paid_date?1:0)||(b.created||'').localeCompare(a.created||''));
+  card.append(h('h2',{style:{fontSize:'var(--text-lg)',fontWeight:'var(--font-semibold)',margin:'0 0 var(--space-2)'}},'NJ Statements'));
+  card.append(h('p',{style:{fontSize:'var(--text-sm)',color:'var(--color-muted-foreground)',margin:'0 0 var(--space-4)'}},'Void a finalized statement to correct a mistake -- releases its lines back to the eligible pool and reverts packet billing.'));
+  const finals=S.njStatements.filter(s=>s.status==='final').sort((a,b)=>(b.created||'').localeCompare(a.created||''));
   if(!finals.length){
     card.append(h('p',{style:{fontSize:'var(--text-sm)',color:'var(--color-muted-foreground)'}},'No finalized statements yet.'));
     return card;
@@ -4324,32 +4399,172 @@ function njReconciliationCard(){
   const tbl=h('table',{className:'table'});
   tbl.append(h('thead',{},h('tr',{},
     h('th',{className:'table-header'},'Period'),
-    h('th',{className:'table-header'},'Status'),
+    h('th',{className:'table-header',style:{textAlign:'right'}},'Opening Balance ($)'),
     h('th',{className:'table-header',style:{textAlign:'right'}},'Total ($)'),
     h('th',{className:'table-header'},''),
   )));
   const tb=h('tbody',{});
   finals.forEach(st=>{
-    const isPaid=!!st.paid_date;
-    const actions=h('div',{style:{display:'flex',gap:'var(--space-2)'}});
-    if(!isPaid){
-      actions.append(h('button',{className:'btn btn-sm btn-primary',onClick:async(e)=>{
-        const btn=e.target;btn.disabled=true;btn.textContent='Marking...';
-        try{await markNJStatementPaid(st.id);showToast('Marked as paid — credit note generated');render();}
-        catch(err){showToast('Error: '+err.message,true);btn.disabled=false;btn.textContent='Mark as Paid';}
-      }},'Mark as Paid'));
-    }
-    actions.append(h('button',{className:'btn btn-sm btn-destructive',onClick:()=>showVoidNJStatementConfirm(st.id)},'Void'));
-    tb.append(h('tr',{style:isPaid?{}:{background:'var(--color-amber-50,#fffbeb)'}},
+    tb.append(h('tr',{},
       h('td',{},njStatementPeriodLabel(st)),
-      h('td',{},isPaid?'Paid '+st.paid_date:'Unpaid'),
+      h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)'}},fmtMoney(parseFloat(st.opening_balance)||0)),
       h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)'}},fmtMoney(parseFloat(st.total)||0)),
-      h('td',{},actions),
+      h('td',{},h('button',{className:'btn btn-sm btn-destructive',onClick:()=>showVoidNJStatementConfirm(st.id)},'Void')),
     ));
   });
   tbl.append(tb);
   card.append(h('div',{style:{overflowX:'auto'}},tbl));
   return card;
+}
+
+// New: standalone Payment reconciliation, independent of any specific statement. A payment is
+// recorded once (amount + date + which invoices it settles, any period), and Void reverses it --
+// no "used elsewhere" refusal needed since payments don't cascade into packet billing.
+function njPaymentsCard(){
+  const card=h('div',{style:{background:'var(--color-card)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'var(--space-6)',marginBottom:'var(--space-5)'}});
+  const hdrRow=h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'var(--space-2)'}});
+  hdrRow.append(h('h2',{style:{fontSize:'var(--text-lg)',fontWeight:'var(--font-semibold)',margin:0}},'NJ Payments'));
+  hdrRow.append(h('button',{className:'btn btn-sm btn-primary',onClick:()=>showRecordNJPaymentModal()},'Record Payment'));
+  card.append(hdrRow);
+  card.append(h('p',{style:{fontSize:'var(--text-sm)',color:'var(--color-muted-foreground)',margin:'0 0 var(--space-4)'}},'Record a payment once Nationwide\'s remittance arrives, tick which tax invoices it settles, and the credit note (their commission) is calculated automatically as the difference.'));
+  const payments=[...S.njPayments].sort((a,b)=>(b.created||'').localeCompare(a.created||''));
+  if(!payments.length){
+    card.append(h('p',{style:{fontSize:'var(--text-sm)',color:'var(--color-muted-foreground)'}},'No payments recorded yet.'));
+    return card;
+  }
+  const tbl=h('table',{className:'table'});
+  tbl.append(h('thead',{},h('tr',{},
+    h('th',{className:'table-header'},'Date'),
+    h('th',{className:'table-header'},'Reference'),
+    h('th',{className:'table-header',style:{textAlign:'right'}},'Amount ($)'),
+    h('th',{className:'table-header'},'Credit Note'),
+    h('th',{className:'table-header'},'Status'),
+    h('th',{className:'table-header'},''),
+  )));
+  const tb=h('tbody',{});
+  payments.forEach(p=>{
+    const cn=S.njCreditNotes.find(c=>c.source_payment_id===p.id);
+    const cnLabel=!cn?'—':(cn.status==='void'?'Voided':fmtMoney(parseFloat(cn.total)||0));
+    const isVoid=p.status==='void';
+    tb.append(h('tr',{style:isVoid?{color:'var(--color-muted-foreground)'}:{}},
+      h('td',{},fmtDFromISO(p.received_date)),
+      h('td',{},p.reference||''),
+      h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)'}},fmtMoney(parseFloat(p.amount)||0)),
+      h('td',{},cnLabel),
+      h('td',{},isVoid?'Void':'Active'),
+      h('td',{},isVoid?null:h('button',{className:'btn btn-sm btn-destructive',onClick:()=>showVoidNJPaymentConfirm(p.id)},'Void')),
+    ));
+  });
+  tbl.append(tb);
+  card.append(h('div',{style:{overflowX:'auto'}},tbl));
+  return card;
+}
+
+function showRecordNJPaymentModal(){
+  const nj=njRetailer();
+  // Only invoices on a FINALIZED statement are payable -- one still sitting in an in-progress
+  // draft hasn't actually been billed/sent to Nationwide yet (finalize is what bills the packets),
+  // so there's nothing real to reconcile a payment against until then.
+  const finalizedIds=new Set(S.njStatements.filter(s=>s.status==='final').map(s=>s.id));
+  const unpaid=(S.taxInvoices||[]).filter(ti=>nj&&ti.retailer_id===nj.id&&ti.status==='active'&&!ti.paid_date&&finalizedIds.has(ti.nj_statement_id))
+    .sort((a,b)=>(a.issue_date||'').localeCompare(b.issue_date||''));
+  const selected=new Set();
+  const overlay=h('div',{className:'modal-overlay',style:{alignItems:'center'},onClick:e=>{if(e.target===overlay)overlay.remove();}});
+  const modal=h('div',{className:'modal'});
+  const hdr=h('div',{className:'modal-header',style:{borderBottom:'none'}});
+  hdr.append(h('h1',{className:'modal-title'},'Record Payment'));
+  modal.append(hdr);
+  const body=h('div',{className:'modal-body'});
+
+  const amountInput=h('input',{className:'input',type:'number',step:'0.01',placeholder:'0.00'});
+  const dateInput=h('input',{className:'input',type:'date'});
+  dateInput.value=todayISO();
+  const refInput=h('input',{className:'input',placeholder:'Optional reference/note'});
+  body.append(fld('Amount received ($)',amountInput,{marginBottom:'var(--space-3)'}));
+  body.append(fld('Date received',dateInput,{marginBottom:'var(--space-3)'}));
+  body.append(fld('Reference',refInput,{marginBottom:'var(--space-4)'}));
+
+  const summary=h('div',{style:{fontSize:'var(--text-sm)',marginBottom:'var(--space-2)'}});
+  const refresh=()=>{
+    const tickedTotal=[...selected].reduce((s,id)=>{const ti=S.taxInvoices.find(t=>t.id===id);return ti?s+njTaxInvoiceAmount(ti).total:s;},0);
+    const amount=parseFloat(amountInput.value)||0;
+    const creditAmount=tickedTotal-amount;
+    summary.textContent='Selected total: '+fmtMoney(tickedTotal)+'  •  Credit note (auto): '+fmtMoney(creditAmount);
+    confirmBtn.disabled=selected.size===0||amount<=0;
+  };
+  amountInput.addEventListener('input',refresh);
+
+  if(!unpaid.length){
+    body.append(h('p',{style:{color:'var(--color-muted-foreground)'}},'No unpaid Nationwide invoices to reconcile.'));
+  }else{
+    const tbl=h('table',{className:'table'});
+    tbl.append(h('thead',{},h('tr',{},
+      h('th',{className:'table-header',style:{width:'36px'}}),
+      h('th',{className:'table-header'},'Date'),
+      h('th',{className:'table-header'},'Invoice'),
+      h('th',{className:'table-header'},'Sub-customer'),
+      h('th',{className:'table-header',style:{textAlign:'right'}},'Amount ($)'),
+    )));
+    const tb=h('tbody',{});
+    unpaid.forEach(ti=>{
+      const cb=h('input',{type:'checkbox'});
+      cb.addEventListener('change',()=>{selected[cb.checked?'add':'delete'](ti.id);refresh();});
+      tb.append(h('tr',{},
+        h('td',{},cb),
+        h('td',{},fmtDFromISO(ti.issue_date)),
+        h('td',{},ti.invoice_number||ti.id),
+        h('td',{},scName(ti.sub_customer_id)||ti.sub_customer_name||''),
+        h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)'}},fmtMoney(njTaxInvoiceAmount(ti).total)),
+      ));
+    });
+    tbl.append(tb);
+    body.append(h('div',{style:{overflowX:'auto'}},tbl));
+  }
+  body.append(summary);
+  modal.append(body);
+
+  const foot=h('div',{className:'modal-footer',style:{borderTop:'none'}});
+  const cancelBtn=h('button',{className:'btn btn-secondary',onClick:()=>overlay.remove()},'Cancel');
+  const confirmBtn=h('button',{className:'btn btn-primary',disabled:true,onClick:async()=>{
+    const amount=parseFloat(amountInput.value)||0;
+    if(!selected.size||amount<=0)return;
+    confirmBtn.disabled=true;confirmBtn.textContent='Recording...';
+    try{
+      await recordNJPayment(amount,dateInput.value||todayISO(),refInput.value||'',[...selected]);
+      overlay.remove();showToast('Payment recorded');render();
+    }catch(e){showToast('Error: '+e.message,true);confirmBtn.disabled=false;confirmBtn.textContent='Record Payment';}
+  }},'Record Payment');
+  foot.append(cancelBtn,confirmBtn);
+  modal.append(foot);
+  overlay.append(modal);
+  document.body.append(overlay);
+  refresh();
+}
+
+function showVoidNJPaymentConfirm(paymentId){
+  const p=S.njPayments.find(x=>x.id===paymentId);
+  if(!p)return;
+  const invoiceCount=S.taxInvoices.filter(ti=>ti.paid_via_payment_id===paymentId).length;
+  const overlay=h('div',{className:'modal-overlay',style:{alignItems:'center'},onClick:e=>{if(e.target===overlay)overlay.remove();}});
+  const modal=h('div',{className:'modal',style:{maxWidth:'440px'}});
+  const hdr=h('div',{className:'modal-header',style:{borderBottom:'none'}});
+  hdr.append(h('h1',{className:'modal-title'},'Void Payment'));
+  modal.append(hdr);
+  const body=h('div',{className:'modal-body'});
+  body.append(h('p',{style:{color:'var(--color-muted-foreground)',lineHeight:'var(--leading-relaxed)'}},
+    'Voiding this payment ('+fmtMoney(parseFloat(p.amount)||0)+', '+fmtDFromISO(p.received_date)+') will revert '+invoiceCount+' tax invoice'+(invoiceCount!==1?'s':'')+' back to unpaid and void its credit note. This cannot be undone.'));
+  modal.append(body);
+  const foot=h('div',{className:'modal-footer',style:{borderTop:'none'}});
+  const cancelBtn=h('button',{className:'btn btn-secondary',onClick:()=>overlay.remove()},'Cancel');
+  const voidBtn=h('button',{className:'btn btn-destructive',onClick:async()=>{
+    voidBtn.disabled=true;voidBtn.textContent='Voiding...';
+    try{await voidNJPayment(paymentId);overlay.remove();showToast('Payment voided');render();}
+    catch(e){showToast('Error: '+e.message,true);voidBtn.disabled=false;voidBtn.textContent='Void';}
+  }},'Void');
+  foot.append(cancelBtn,voidBtn);
+  modal.append(foot);
+  overlay.append(modal);
+  document.body.append(overlay);
 }
 
 function renderAdmin(){
@@ -4369,6 +4584,7 @@ function renderAdmin(){
   c.append(wip('Shipping Runs Admin','View, edit, and delete shipping runs. Add or remove individual packets from a run. Deleting a run clears shipping_run_id on all linked packets and removes the run record.'));
   c.append(wip('Tax Invoice Admin','Void tax invoices, reissue with corrected packet sets, and manage INV-XXXX records. Operates on tax_invoices table; shipping run record is not duplicated here. Access will be restricted to admin users only.'));
   c.append(njReconciliationCard());
+  c.append(njPaymentsCard());
   return c;
 }
 
