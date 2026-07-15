@@ -24,6 +24,7 @@ Tracks which pages have been fully audited for: correct page-header structure, f
 | Dashboard | ⬜ Not started | `.stat-card`, `.panel`, `.dash-header` still in legacy styles.css |
 | Billing Steps 2–4 | ⬜ Not started | |
 | Reports landing | ⬜ Not started | Card grid; hardcoded px values present |
+| Billing Landing (`renderBillingLanding`, new — Run Billing entry) | ⬜ Not started | New screen added during the NJ billing rework (toggle-dependent 2-option entry: Direct/Nationwide). Currently reuses the old ad-hoc `opt()` card markup from the retired NJ chooser screen — Gabby wants it restyled to match Reports landing's card grid once that page itself gets its design-system pass. Do both together — she'll give layout instructions when we get to it. |
 
 ---
 

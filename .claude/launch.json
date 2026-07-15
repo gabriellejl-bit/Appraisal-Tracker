@@ -4,8 +4,13 @@
     {
       "name": "http-server",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["serve", "/Users/gabriellelovering/Documents/Claude Projects/appraisal-tracker", "-p", "8081", "--no-clipboard"],
-      "port": 8081
+      "runtimeArgs": [
+        "serve",
+        "/Users/gabriellelovering/Documents/Claude Projects/appraisal-tracker",
+        "--no-clipboard"
+      ],
+      "port": 8081,
+      "autoPort": true
     }
   ]
 }
