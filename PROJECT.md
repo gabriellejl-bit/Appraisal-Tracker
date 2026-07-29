@@ -234,7 +234,7 @@ Three real-world documents, only the second is built in this app:
 
 **Key helpers:** `njRetailer()`, `njTaxInvoiceAmount(ti)` (recomputes a tax invoice's GST-inclusive total from its packets, same math as `printInvoice()`), `njCurrentBalance(asOfDateISO)` (the live balance/aging computation — the core fix; used by the builder's opening-balance display, `saveNJDraft()`'s frozen snapshot, and `printStatement()`'s reprint), `njLinePool()` (eligible new-lines pool described above), `njStatementPeriodLabel(st)`, `saveNJDraft()`, `finalizeNJStatement()`, `recordNJPayment(amount,receivedDate,reference,invoiceIds)`, `voidNJPayment(id)`, `voidNJStatement(id)`, `printStatement(id)` (reuses `printInvoice()`'s popup/base64-logo pattern via the shared `PGL_LOGO_B64` constant — extracted from `printInvoice()` so both share one copy instead of duplicating the ~32KB logo).
 
-**Still open:** Nationwide's Bill-To address on the printed Statement is the AU head-office address from their supplier procedure doc (flagged inline with a code comment) — not yet confirmed correct for NZ-issued statements. The discount-leak in `buildInvoiceSummary()` (discount applied before splitting by `paula_pct`/`gabrielle_pct`, so Paula's NJ share is under-calculated by 8.5%) is also still unfixed — see rule 21 in `CLAUDE.md`. Credit note lines print their date range as the reference (`'Credit note — Payment '+date`) instead of a real credit note number — standard invoicing practice expects a proper number the same way tax invoices get `INV-XXXX`; `nj_credit_notes` has no numbering scheme yet. This whole feature is dev-only, not yet migrated to prod — see `NJ-RECONCILIATION-REDESIGN.md` section 4a for the prod migration plan (write it only once dev is fully confirmed).
+**Still open:** Nationwide's Bill-To address on the printed Statement is the AU head-office address from their supplier procedure doc (flagged inline with a code comment) — not yet confirmed correct for NZ-issued statements. The discount-leak in `buildInvoiceSummary()` (discount applied before splitting by `paula_pct`/`gabrielle_pct`, so Paula's NJ share is under-calculated by 8.5%) is also still unfixed — see rule 21 in `CLAUDE.md`. Credit note lines print their date range as the reference (`'Credit note — Payment '+date`) instead of a real credit note number — standard invoicing practice expects a proper number the same way tax invoices get `INV-XXXX`; `nj_credit_notes` has no numbering scheme yet. **Prod status:** shipped 2026-07-15 (commit `a0bc296`) — prod has all 4 NJ tables and the associated `tax_invoices`/`shipping_runs` columns, currently empty (no real statements run through prod yet). Known gap: prod is missing 6 FKs that dev has (`nj_credit_notes_nj_statement_id_fkey`, `nj_statement_lines_credit_note_id_fkey`, `nj_statement_lines_statement_id_fkey`, `nj_statement_lines_tax_invoice_id_fkey`, `tax_invoices_nj_statement_id_fkey`, `packets_shipping_run_id_fkey`) — dev's schema is correct here, prod's migration script just omitted them; fix is additive FKs on prod, not removing them from dev.
 
 **Business rule — one invoice/slip per packet:**
 A packet can never appear on more than one invoice or packing slip. The database enforces this structurally (`packets.shipping_run_id` is a single FK), and the shipping view enforces it in the UI by only showing packets where `shipping_run_id IS NULL`. If a packet needs to move to a different run (e.g. error correction), it must first be removed from the existing run (voiding or editing the invoice/slip) before it can be re-shipped. The UI for this is a future todo — see "Invoice edit / void screen" in Planned Features.
@@ -265,7 +265,7 @@ Groups items by shipping run. Each run header: `Invoice: INV-XXXX YYYY-MM-DD (tr
 Centre: Dashboard · Records · Run Billing ($icon) · Reports · Shipping
 Right: [+ New Packet] [G/P work-attribution toggle] [logged-in identity: name/email from `profiles`/session]
 Sidenav General section: Admin · Logout (signs out via `supabaseAuth.auth.signOut()`)
-Reports nav active for: reports, billingRunsReport, customerReport.
+Reports nav active for: reports, billingRunsReport, customerReport, taxInvoices, shippingReport, fulfilmentReport, njStatementsReport, njMonthlySplitCsv, jamiesShippingReport.
 Shipping nav active for: shipping, shippingReport, fulfilmentReport.
 NJ Statement flow lives under `S.view==='njStatement'` (`renderNJStatement()`, dispatches on `S.njStatement.step`: `'builder'`/`'history'`) — reached only via the Run Billing chooser, not its own nav item.
 
@@ -307,13 +307,16 @@ Draft-building view (`renderNJStatementBuilder()`). Live Opening Balance summary
 Read-only-ish list (`renderNJStatementHistory()`, `S.njStatement.step==='history'`, reached via a link on the chooser screen): Period, Generated date, Status, Total, inline-editable Accounting Ref. Draft → Edit/Preview. Final → Reprint only — Void lives in Admin instead, not here (and there's no more Mark as Paid anywhere per-statement — see "Recording a payment" above).
 
 ### Reports
-Landing page → Billing Runs, Customer Report.
+Landing page → Billing Runs, Customer Report, Tax Invoices, Shipping Audit, Fulfilment Summary, Nationwide Statements, Nationwide Monthly Split (CSV), Jamies Monthly Shipping.
 
 ### Billing Runs
 Billing run history. Regenerate PDFs. Delete run.
 
 ### Customer Report
 Filter: date range + retailer. Groups by retailer, lists items per customer. Download PDF.
+
+### Tax Invoices
+Filter: sub-customer + date range. Flat list of NJ tax invoices (invoice #, date, sub-customer, packet count, GST-inclusive amount via `njTaxInvoiceAmount()`) with a Reprint action per row.
 
 ### Shipping
 - Filter: retailer/sub-customer. Lists unshipped packets with checkboxes.
@@ -324,6 +327,17 @@ Expandable per-run rows. Columns: Date, Retailer/Sub-customer, Invoice, Tracking
 
 ### Fulfilment Summary
 Flat list of all shipping runs with packet counts and costs.
+
+### Nationwide Statements
+Historical drill-down report (`renderNJStatementsReport()`), separate from the Statement Builder/History above — built so a specific tax invoice or packet number can be found without regenerating and reading back through PDFs. Filters: Date Range (statement date, default This FY), Sub-customer, and a Search box matching invoice number or packet ref (`customer_ref`) — Search deliberately ignores the Date Range filter (you're hunting for a specific thing, not browsing a period) and narrows/hides non-matching invoice lines within each statement rather than hiding the whole statement. Only `status==='final'` statements are shown (void ones are hidden entirely, not greyed out). Each matching statement renders as its own section: header (Statement Date, Status, Opening/This Statement/Closing balance) above a table of that statement's frozen `nj_statement_lines`, with invoice rows expandable (same chevron interaction as the Statement Builder) to show that invoice's packets via the existing `packetsForTaxInvoice()` helper.
+
+### Nationwide Monthly Split (CSV)
+Reconciliation data dump (`renderNJMonthlySplitCsv()`/`njMonthlySplitCsvData()`), built to check Paula isn't under/over-billing Gabby given the 8.5% NJ discount interaction, and to reconcile shipping against the fulfilment partner and Nationwide's own statement. Filter: standard Date Range dropdown (default Last Month) — filters valuation rows by **packet date** (deliberately, so the CSV shows the gap between a packet being entered and it actually being shipped/invoiced) and shipping rows by **ship date** independently. On-screen: packet/item/shipment counts, a Valuations split totals table (Nationwide/Paula/Gabby × without/with the 8.5% discount), a Shipping totals table (Owed to Fulfilment Partner / Charged to Nationwide / Margin), and a Download CSV button.
+
+CSV column order: Type, Tax Invoice Date, Tax Invoice #, Packet Date, Ref, Surname, Sub-customer, Description, Item Cost (Raw), Item Cost +GST, Paula %, Gabby %, Paula (No Discount), Gabby (No Discount), Paula (8.5% Discount), Gabby (8.5% Discount), Owed to Fulfilment Partner, Charged to Nationwide, Shipping Less GST, Paula Billed, Gabby Billed — driven by a single `NJ_SPLIT_CSV_COLS` ordered list (`njSplitCsvRowValues()`) rather than hand-aligned arrays, so reordering columns is a one-line change. Valuation rows: tax invoice # / date come from the packet's shipping run's `tax_invoices` row, blank if not yet shipped/invoiced (the point — shows what's billing-complete but not yet invoiced). Shipping rows skip every Paula/Gabby split column (Paula never bills shipping) but repeat "Charged to Nationwide" into "Item Cost +GST" too, so that one column summed top-to-bottom (valuations + shipping) gives the whole GST-inclusive invoice total to check against the statement; "Shipping Less GST" is that same charged figure ÷ 1.15. Row order: grouped by invoice (via a sort key of invoiceDateISO → invoiceNumber → packetDateMs so same-invoice rows stay contiguous even when two invoices share a date), each invoice's packets followed immediately by its shipping row; un-invoiced packets sort last (no shipping row to pair with); any shipment whose packets fell outside the selected range still gets listed, appended at the very end. Totals row at the bottom sums every money column.
+
+### Jamies Monthly Shipping
+For the fulfilment partner to invoice against (`renderJamiesShippingReport()`). Month dropdown via `jamiesMonthOptions()` — current month plus the last 6 completed ones, defaulting to last month (index 1; current month is included so the running total can be checked before the month closes, but isn't the default since the partner only invoices for a complete month). Table: Date, Shipping Number (`invoice_number` for NJ / `packing_slip_number` for Direct), Sub-customer, Amount — the raw `shipping_cost` as entered, never `shipping_cost_billed` (NJ's 10% markup is an internal Nationwide-billing figure, not what the fulfilment partner actually charged) and never GST-adjusted. Totals row: "Total (incl GST)".
 
 ---
 
@@ -338,6 +352,7 @@ Flat list of all shipping runs with packet counts and costs.
 **Key helpers:**
 - `getCurrentUser()` — full user row for the **work-attribution toggle** (`S.user`, G/P), call once per function. Not the logged-in identity — use `S.session.user` / `S.profile` for that (see "Authentication"). These two were previously conflated (the header briefly showed the toggle's name instead of the real login), so keep them separate: `S.user` drives business logic and can be switched anytime via the avatars; `S.session`/`S.profile` reflect who's actually authenticated and should never change when the avatars are clicked.
 - `scName(id)` — resolves `sub_customers.id` → display name; use everywhere instead of raw `sub_customer_name`
+- `packetRetailerLabel(p)` — resolves a packet's display retailer name (sub-customer name if genuinely theirs, else the retailer's own name); use instead of a bare `scName(p.sub_customer_id)||retailerName(p.retailer_id)`, which trusts a possibly-stale `sub_customer_id` — see CLAUDE.md rule 24
 - `getDollarStats()` — `{unbilled, earnedWeek, earnedMonth}` POST-TAX, POST-DISCOUNT
 - `packetCosts(id)` — applies retailer `discount_pct`, returns `{total, paula, gabby}` (billing use only — NOT for invoices)
 - `packetBillingLabel(pkt)`, `userHasBilled(pkt)`, `userHasNoWork(pktId)`
@@ -393,16 +408,8 @@ A restricted-access admin area for complex operations not safe to expose in the 
 - **Alexandra / Queenstown billing review** — Manual test pass: verify Step 2 modal and PDF generation are correct under the unified billing model (no shipping, unaffected by tax_invoices change).
 - **Voiding an already-Paid NJ statement whose credit note is already used elsewhere** — `voidNJStatement()` currently refuses this case outright rather than unwinding it automatically; needs a real design before it's more than a safe refusal.
 
-## Future Reports — Split Reconciliation
+## Split Reconciliation
 
-Since June 2026, Gabby invoices all retailers for the full cost, and Paula invoices Gabby for her split percentage. This means the retailer-facing invoices no longer reflect individual splits. Two reports are needed to support reconciliation:
+~~Future Reports — Split Reconciliation~~ — done, via **Nationwide Monthly Split (CSV)** (see "Views / Screens" above), rather than the two separate reports originally sketched here. That CSV sidesteps the "which formula is correct" question below by showing Paula's raw share *and* her actual (discounted) share side by side on every row, so the gap is visible directly instead of the report having to pick one.
 
-**1. Paula's Split Report**
-For a given billing run or date range, show Paula's share of each packet item — `paula_pct` applied to the discounted cost. This is what Paula invoices Gabby. Should match the amounts on Paula's generated PDFs.
-
-**Note — this spec may itself be wrong.** Per Gabby: Paula is effectively a subcontractor, and her invoice should be `paula_pct` applied to the *raw, undiscounted* cost (e.g. $100 packet, 100% Paula → she bills exactly $100) — the discount is Gabby's margin to absorb, not something that should reduce Paula's payment. `buildInvoiceSummary()` currently applies the discount before splitting by `paula_pct`, which matches this doc's "discounted cost" wording but not what Gabby actually wants — only visible for NJ since every other retailer has `discount_pct=0`. Flagged, not fixed — see `CLAUDE.md` rule 21. Resolve this before building either report below, since both depend on getting Paula's share formula right.
-
-**2. Split Reconciliation Report**
-Side-by-side comparison of: (a) what Gabby billed the retailer (full cost after discount), (b) Paula's share (from `paula_pct`), (c) Gabby's effective share (total minus Paula's). Allows both to verify the internal split against the retailer-facing invoice.
-
-These reports should use the same date range / retailer filters as the existing Billing Runs and Customer Report pages.
+**Still open, not fixed:** `buildInvoiceSummary()` — what Paula actually gets invoiced through the Run Billing wizard — still applies the NJ discount *before* splitting by `paula_pct`, undercutting her share by the discount amount on every NJ packet (only visible for NJ, since every other retailer has `discount_pct=0`). Per Gabby, Paula is effectively a subcontractor and should bill `paula_pct` of the *raw* cost — the discount is Gabby's margin to absorb, not Paula's to share. See `CLAUDE.md` rule 21.
