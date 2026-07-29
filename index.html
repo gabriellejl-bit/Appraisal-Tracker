@@ -376,6 +376,16 @@ function getDollarStats(){
 
 function scName(id){return id?S.subCustomers.find(sc=>sc.id===id)?.name||id:'';}
 
+// Resolves a packet's display retailer name -- shows the sub-customer's name when there's a
+// GENUINELY matching one (NJ packets), otherwise falls back to the packet's own retailer.
+// Checking sc.retailer_id===p.retailer_id (not just p.sub_customer_id being set) guards against
+// a stale sub_customer_id surviving a retailer change on the packet's Edit form and showing the
+// wrong retailer everywhere this label is used (Records, Billing item table, Dashboard Unbilled).
+function packetRetailerLabel(p){
+  const sc=p.sub_customer_id?S.subCustomers.find(x=>x.id===p.sub_customer_id&&x.retailer_id===p.retailer_id):null;
+  return(sc?sc.name:'')||retailerName(p.retailer_id);
+}
+
 function myPackets(){
   // Dashboard filters to current user -- we need packet_items for this
   // For now filter packets where we have any items (all shown, split shown per user)
@@ -1120,7 +1130,7 @@ function renderRecords(){
     // already used in the Billing screen's item table. Unlike the Dashboard's Unbilled table,
     // Records has only one Retailer column (no separate Sub-customer column), so this replaces
     // rather than supplements it.
-    const retName=scName(r.sub_customer_id)||retailerName(r.retailer_id);
+    const retName=packetRetailerLabel(r);
     const bl=packetBillingLabel(r);const sn=bl||statusName(r.status_id);
     const rowClick=e=>{e.stopPropagation();S.editId=r.id;S.view='edit';renderAsync();};
     const trAttrs={style:{cursor:'pointer'},onClick:rowClick};
@@ -1477,6 +1487,10 @@ function renderForm(packet){
     hdr.retailerId=parseInt(e.target.value);
     const r=S.retailers.find(x=>x.id===hdr.retailerId);
     prefixDisplay.textContent=pad3(r?.code||0)+' -';
+    // Clear a stale sub-customer left over from switching away from NJ (or any other
+    // sub-customer-having retailer) -- otherwise it silently survives into the saved packet
+    // and makes Records show the old sub-customer's name instead of the new retailer's.
+    if(!hasSubCustomers())hdr.subCustomer=null;
     syncCustomerRef();
     rebuildCustomerRefInput();
     rebuildSubCustomerSelect();
@@ -2900,7 +2914,7 @@ function renderBillingStep1(){
         h('td',{style:{width:'36px'}},cb),
         h('td',{},pkt.date||''),
         h('td',{style:{maxWidth:'120px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},pkt.surname||''),
-        h('td',{style:{maxWidth:'120px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},scName(pkt.sub_customer_id)||retailerName(pkt.retailer_id)),
+        h('td',{style:{maxWidth:'120px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},packetRetailerLabel(pkt)),
         h('td',{style:{maxWidth:'100px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},jt.name||''),
         h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)',fontSize:'var(--text-sm)'}},fmtMoney(userCost)),
         h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)',fontSize:'var(--text-sm)'}},fmtMoney(cost)),
@@ -3868,7 +3882,7 @@ function renderShipping(){
     const cb=h('input',{type:'checkbox'});cb.checked=sel.has(p.id);
     cb.addEventListener('change',e=>{e.stopPropagation();e.target.checked?sel.add(p.id):sel.delete(p.id);render();});
     const itemCount=S.allPacketItems.filter(i=>i.packet_id===p.id).length;
-    const retailerLabel=scName(p.sub_customer_id)||S.retailers.find(r=>r.id===p.retailer_id)?.name||'';
+    const retailerLabel=packetRetailerLabel(p);
     const row=h('tr',{style:{cursor:'pointer'},onClick:()=>{sel.has(p.id)?sel.delete(p.id):sel.add(p.id);render();}},
       h('td',{onClick:e=>e.stopPropagation()},cb),
       h('td',{},p.date),
