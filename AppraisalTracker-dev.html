@@ -90,6 +90,9 @@ let S={
   shippingReport:{dateRange:'month',dateFrom:'',dateTo:''},
   fulfilmentReport:{dateRange:'lastmonth',dateFrom:'',dateTo:''},
   taxInvoicesReport:{dateRange:'thisfy',dateFrom:'',dateTo:''},
+  njStatementsReport:{dateRange:'thisfy',dateFrom:'',dateTo:'',subCustomer:'',search:''},
+  njMonthlySplitCsv:{dateRange:'lastmonth',dateFrom:'',dateTo:''},
+  jamiesShippingReport:{month:''},
   toast:null,tt:null,ready:false,online:true,user:'gabby',
   currentUser:null,  // full user row from users table
   session:null,      // Supabase Auth session (null = signed out)
@@ -375,6 +378,16 @@ function getDollarStats(){
 }
 
 function scName(id){return id?S.subCustomers.find(sc=>sc.id===id)?.name||id:'';}
+
+// Resolves a packet's display retailer name -- shows the sub-customer's name when there's a
+// GENUINELY matching one (NJ packets), otherwise falls back to the packet's own retailer.
+// Checking sc.retailer_id===p.retailer_id (not just p.sub_customer_id being set) guards against
+// a stale sub_customer_id surviving a retailer change on the packet's Edit form and showing the
+// wrong retailer everywhere this label is used (Records, Billing item table, Dashboard Unbilled).
+function packetRetailerLabel(p){
+  const sc=p.sub_customer_id?S.subCustomers.find(x=>x.id===p.sub_customer_id&&x.retailer_id===p.retailer_id):null;
+  return(sc?sc.name:'')||retailerName(p.retailer_id);
+}
 
 function myPackets(){
   // Dashboard filters to current user -- we need packet_items for this
@@ -766,7 +779,7 @@ function renderNav(){
     toggleBtns.append(btn);
   });
   const toggle=h('div',{className:'user-toggle'},toggleBtns,userInfo);
-  const isReportsView=['reports','customerReport','billingRunsReport','shippingReport','fulfilmentReport','taxInvoices'].includes(S.view);
+  const isReportsView=['reports','customerReport','billingRunsReport','shippingReport','fulfilmentReport','taxInvoices','njStatementsReport','njMonthlySplitCsv','jamiesShippingReport'].includes(S.view);
   const newBtn=h('button',{className:'btn btn-primary has-icon',style:{justifySelf:'start'},onClick:()=>{S.view='form';render();}},h('span',{htmlContent:'<svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4.36134 12V0H7.61344V12H4.36134ZM0 7.58442V4.41559H12V7.58442H0Z" fill="white"/></svg>',style:{display:'inline-flex',alignItems:'center'}}),'NEW PACKET');
   const isOnline=S.online;
 
@@ -1120,7 +1133,10 @@ function renderRecords(){
     // already used in the Billing screen's item table. Unlike the Dashboard's Unbilled table,
     // Records has only one Retailer column (no separate Sub-customer column), so this replaces
     // rather than supplements it.
-    const retName=scName(r.sub_customer_id)||retailerName(r.retailer_id);
+    // Only trust r.sub_customer_id if it actually belongs to r.retailer_id -- guards against
+    // a stale sub_customer_id left over from an earlier retailer change (see the retSel change
+    // handler in renderForm()) still showing the wrong retailer's name here.
+    const retName=packetRetailerLabel(r);
     const bl=packetBillingLabel(r);const sn=bl||statusName(r.status_id);
     const rowClick=e=>{e.stopPropagation();S.editId=r.id;S.view='edit';renderAsync();};
     const trAttrs={style:{cursor:'pointer'},onClick:rowClick};
@@ -1477,6 +1493,10 @@ function renderForm(packet){
     hdr.retailerId=parseInt(e.target.value);
     const r=S.retailers.find(x=>x.id===hdr.retailerId);
     prefixDisplay.textContent=pad3(r?.code||0)+' -';
+    // Clear a stale sub-customer left over from switching away from NJ (or any other
+    // sub-customer-having retailer) -- otherwise it silently survives into the saved packet
+    // and makes Records show the old sub-customer's name instead of the new retailer's.
+    if(!hasSubCustomers())hdr.subCustomer=null;
     syncCustomerRef();
     rebuildCustomerRefInput();
     rebuildSubCustomerSelect();
@@ -2900,7 +2920,7 @@ function renderBillingStep1(){
         h('td',{style:{width:'36px'}},cb),
         h('td',{},pkt.date||''),
         h('td',{style:{maxWidth:'120px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},pkt.surname||''),
-        h('td',{style:{maxWidth:'120px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},scName(pkt.sub_customer_id)||retailerName(pkt.retailer_id)),
+        h('td',{style:{maxWidth:'120px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},packetRetailerLabel(pkt)),
         h('td',{style:{maxWidth:'100px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},jt.name||''),
         h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)',fontSize:'var(--text-sm)'}},fmtMoney(userCost)),
         h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)',fontSize:'var(--text-sm)'}},fmtMoney(cost)),
@@ -3459,6 +3479,46 @@ function renderReports(){
   );
   frCard.append(frBody);grid.append(frCard);
 
+  // Nationwide Statements card
+  const njCard=h('div',{className:'panel',style:{cursor:'pointer',transition:'box-shadow .2s,transform .15s'},
+    onClick:()=>{S.view='njStatementsReport';render();}});
+  njCard.addEventListener('mouseenter',()=>{njCard.style.boxShadow='var(--shadow-md)';njCard.style.transform='translateY(-2px)';});
+  njCard.addEventListener('mouseleave',()=>{njCard.style.boxShadow='';njCard.style.transform='';});
+  const njBody=h('div',{style:{padding:'28px 24px'}});
+  njBody.append(
+    h('div',{style:{width:'44px',height:'44px',background:'var(--color-cyan-50,#ecfeff)',borderRadius:'12px',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'16px',color:'var(--color-cyan-600,#0891b2)'},htmlContent:I.calendar}),
+    h('h3',{style:{fontFamily:'var(--font-serif)',fontSize:'17px',fontWeight:'600',color:'var(--color-foreground)',marginBottom:'8px'}},'Nationwide Statements'),
+    h('p',{style:{fontSize:'13px',color:'var(--color-muted-foreground)',lineHeight:'1.5'}},'Statements with their invoices and packets. Filter by date/sub-customer or search an invoice/packet number.'),
+    h('p',{style:{fontSize:'12px',color:'var(--color-muted-foreground)',marginTop:'12px'}},(S.njStatements||[]).filter(s=>s.status==='final').length+' statement'+((S.njStatements||[]).filter(s=>s.status==='final').length!==1?'s':'')+' finalized'),
+  );
+  njCard.append(njBody);grid.append(njCard);
+
+  // Nationwide Monthly Split (CSV) card
+  const splitCard=h('div',{className:'panel',style:{cursor:'pointer',transition:'box-shadow .2s,transform .15s'},
+    onClick:()=>{S.view='njMonthlySplitCsv';render();}});
+  splitCard.addEventListener('mouseenter',()=>{splitCard.style.boxShadow='var(--shadow-md)';splitCard.style.transform='translateY(-2px)';});
+  splitCard.addEventListener('mouseleave',()=>{splitCard.style.boxShadow='';splitCard.style.transform='';});
+  const splitBody=h('div',{style:{padding:'28px 24px'}});
+  splitBody.append(
+    h('div',{style:{width:'44px',height:'44px',background:'var(--color-rose-50,#fff1f2)',borderRadius:'12px',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'16px',color:'var(--color-rose-600,#e11d48)'},htmlContent:I.list}),
+    h('h3',{style:{fontFamily:'var(--font-serif)',fontSize:'17px',fontWeight:'600',color:'var(--color-foreground)',marginBottom:'8px'}},'Nationwide Monthly Split (CSV)'),
+    h('p',{style:{fontSize:'13px',color:'var(--color-muted-foreground)',lineHeight:'1.5'}},'Every Nationwide packet for a chosen month, with Paula/Gabby split shown with and without the 8.5% discount. Download as CSV.'),
+  );
+  splitCard.append(splitBody);grid.append(splitCard);
+
+  // Jamies Monthly Shipping card
+  const jamiesCard=h('div',{className:'panel',style:{cursor:'pointer',transition:'box-shadow .2s,transform .15s'},
+    onClick:()=>{S.view='jamiesShippingReport';render();}});
+  jamiesCard.addEventListener('mouseenter',()=>{jamiesCard.style.boxShadow='var(--shadow-md)';jamiesCard.style.transform='translateY(-2px)';});
+  jamiesCard.addEventListener('mouseleave',()=>{jamiesCard.style.boxShadow='';jamiesCard.style.transform='';});
+  const jamiesBody=h('div',{style:{padding:'28px 24px'}});
+  jamiesBody.append(
+    h('div',{style:{width:'44px',height:'44px',background:'var(--color-amber-50,#fffbeb)',borderRadius:'12px',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'16px',color:'var(--color-amber-600,#d97706)'},htmlContent:I.upload}),
+    h('h3',{style:{fontFamily:'var(--font-serif)',fontSize:'17px',fontWeight:'600',color:'var(--color-foreground)',marginBottom:'8px'}},'Jamies Monthly Shipping'),
+    h('p',{style:{fontSize:'13px',color:'var(--color-muted-foreground)',lineHeight:'1.5'}},'Shipment list for a chosen month, for the fulfilment partner to invoice against.'),
+  );
+  jamiesCard.append(jamiesBody);grid.append(jamiesCard);
+
   c.append(grid);
   return c;
 }
@@ -3868,7 +3928,7 @@ function renderShipping(){
     const cb=h('input',{type:'checkbox'});cb.checked=sel.has(p.id);
     cb.addEventListener('change',e=>{e.stopPropagation();e.target.checked?sel.add(p.id):sel.delete(p.id);render();});
     const itemCount=S.allPacketItems.filter(i=>i.packet_id===p.id).length;
-    const retailerLabel=scName(p.sub_customer_id)||S.retailers.find(r=>r.id===p.retailer_id)?.name||'';
+    const retailerLabel=packetRetailerLabel(p);
     const row=h('tr',{style:{cursor:'pointer'},onClick:()=>{sel.has(p.id)?sel.delete(p.id):sel.add(p.id);render();}},
       h('td',{onClick:e=>e.stopPropagation()},cb),
       h('td',{},p.date),
@@ -4706,6 +4766,484 @@ function renderTaxInvoices(){
   return c;
 }
 
+// =============================================================================
+// NATIONWIDE STATEMENTS REPORT
+// =============================================================================
+// Read-only, historical: reads each finalized statement's FROZEN nj_statement_lines (same
+// source printStatement() uses for reprint), not the live draft pool (njLinePool() is for the
+// in-progress builder only). Lets Gabby find which statement/invoice a given packet or tax
+// invoice number ended up on without generating and reading back through PDFs.
+function njStatementReportLineDetail(l){
+  if(l.line_type==='invoice'){
+    const ti=S.taxInvoices.find(t=>t.id===l.tax_invoice_id);
+    if(!ti)return null;
+    const run=(S.shippingRuns||[]).find(r=>r.id===ti.shipping_run_id);
+    return{type:'invoice',dateISO:ti.issue_date||'',reference:ti.invoice_number||ti.id,
+      subCustomer:l.sub_customer_name||scName(ti.sub_customer_id)||'',shipDateISO:run?run.ship_date:'',
+      amount:parseFloat(l.amount)||0,ti,subCustomerId:ti.sub_customer_id};
+  }
+  if(l.line_type==='credit'){
+    const cn=S.njCreditNotes.find(c=>c.id===l.credit_note_id);
+    const src=cn?S.njPayments.find(p=>p.id===cn.source_payment_id):null;
+    return{type:'credit',dateISO:cn?cn.issue_date:'',reference:'Credit note — Payment'+(src?' '+fmtDFromISO(src.received_date):''),
+      subCustomer:'',shipDateISO:'',amount:parseFloat(l.amount)||0};
+  }
+  if(l.line_type==='payment'){
+    const p=S.njPayments.find(x=>x.id===l.payment_id);
+    return{type:'payment',dateISO:p?p.received_date:'',reference:'Payment received'+(p&&p.reference?' — '+p.reference:''),
+      subCustomer:'',shipDateISO:'',amount:parseFloat(l.amount)||0};
+  }
+  return null;
+}
+
+function renderNJStatementsReport(){
+  const sr=S.njStatementsReport;
+  const c=h('div',{});
+  c.append(renderBreadcrumb('Nationwide Statements'));
+  c.append(h('div',{className:'page-header'},h('h1',{className:'h1'},'Nationwide Statements')));
+
+  // Filter bar: Sub-customer, Date Range, Search
+  const fb=h('div',{style:{padding:'var(--space-5) 0',marginBottom:'var(--space-4)',display:'flex',flexDirection:'column',gap:'var(--space-3)'}});
+  const filterRow=h('div',{style:{display:'flex',gap:'var(--space-4)',alignItems:'flex-end',flexWrap:'wrap'}});
+
+  const scSel=h('select',{className:'select',style:{width:'200px'}});
+  const allScIds=[...new Set((S.taxInvoices||[]).filter(ti=>ti.sub_customer_id).map(ti=>ti.sub_customer_id))].sort((a,b)=>scName(a).localeCompare(scName(b)));
+  scSel.append(h('option',{value:''},'All sub-customers'));
+  allScIds.forEach(sc=>{const o=h('option',{value:sc},scName(sc));if(sr.subCustomer===sc)o.selected=true;scSel.append(o);});
+  scSel.addEventListener('change',e=>{sr.subCustomer=e.target.value;render();});
+  filterRow.append(fld('Sub-customer',scSel));
+
+  const fmtD2=d=>new Date(d).toLocaleDateString('en-NZ',{day:'numeric',month:'short'});
+  const drSel=h('select',{className:'select',style:{width:'160px'}});
+  [['month','This Month'],['lastmonth','Last Month'],['thisfy','This FY'],['lastfy','Last FY'],['custom','Custom']].forEach(([v,l])=>{
+    let label=l;
+    if(v==='custom'&&sr.dateRange==='custom'&&sr.dateFrom&&sr.dateTo)label=fmtD2(sr.dateFrom)+' – '+fmtD2(sr.dateTo);
+    const o=h('option',{value:v},label);
+    if(sr.dateRange===v)o.selected=true;
+    drSel.append(o);
+  });
+  drSel.addEventListener('change',e=>{sr.dateRange=e.target.value;if(sr.dateRange!=='custom'){sr.dateFrom='';sr.dateTo='';}render();});
+  filterRow.append(fld('Date Range',drSel));
+
+  if(sr.dateRange==='custom'){
+    const fi=h('input',{type:'date',className:'input',style:{width:'150px'}});fi.value=sr.dateFrom;
+    const ti=h('input',{type:'date',className:'input',style:{width:'150px'}});ti.value=sr.dateTo;
+    fi.addEventListener('input',e=>{sr.dateFrom=e.target.value;render();});
+    ti.addEventListener('input',e=>{sr.dateTo=e.target.value;render();});
+    filterRow.append(fld('From',fi),fld('To',ti));
+  }
+
+  const searchInput=h('input',{className:'input',type:'text',placeholder:'Invoice or packet number...',style:{width:'220px'}});
+  searchInput.value=sr.search;
+  searchInput.addEventListener('input',e=>{sr.search=e.target.value;render();});
+  filterRow.append(fld('Search',searchInput));
+
+  fb.append(filterRow);
+  if(sr.search){
+    fb.append(h('p',{style:{fontSize:'var(--text-xs)',color:'var(--color-muted-foreground)'}},'Searching ignores the Date Range filter above.'));
+  }
+  c.append(fb);
+
+  // ---- Filtering ----
+  const searchTerm=(sr.search||'').trim().toLowerCase();
+  let dr=null;
+  if(!searchTerm){ // a search term looks past whatever date range happens to be selected
+    if(sr.dateRange!=='custom')dr=getDateRange(sr.dateRange);
+    else if(sr.dateFrom&&sr.dateTo)dr={from:new Date(sr.dateFrom),to:new Date(sr.dateTo+'T23:59:59')};
+  }
+
+  let statements=(S.njStatements||[]).filter(st=>st.status==='final'); // void statements never shown here
+  if(dr){
+    statements=statements.filter(st=>{
+      const dISO=st.statement_date||st.period_end;
+      if(!dISO)return false;
+      const d=isoToLocalDate(dISO.slice(0,10));
+      return d>=dr.from&&d<=dr.to;
+    });
+  }
+  statements.sort((a,b)=>(b.statement_date||b.period_end||'').localeCompare(a.statement_date||a.period_end||''));
+
+  const sections=[];
+  statements.forEach(st=>{
+    const lines=S.njStatementLines.filter(l=>l.statement_id===st.id);
+    const rows=[];
+    let anyInvoiceMatched=false;
+    lines.forEach(l=>{
+      const d=njStatementReportLineDetail(l);
+      if(!d)return;
+      if(d.type==='invoice'){
+        if(sr.subCustomer&&d.subCustomerId!==sr.subCustomer)return; // hide non-matching invoices
+        if(searchTerm){
+          const pkts=packetsForTaxInvoice(d.ti);
+          const invMatch=(d.reference||'').toLowerCase().includes(searchTerm);
+          const pktMatch=pkts.some(p=>(p.ref||'').toLowerCase().includes(searchTerm));
+          if(!invMatch&&!pktMatch)return;
+          d.pkts=pkts;
+        }else{
+          d.pkts=packetsForTaxInvoice(d.ti);
+        }
+        anyInvoiceMatched=true;
+      }
+      // credit/payment lines always stay -- not sub-customer-specific, and provide statement context
+      rows.push(d);
+    });
+    if((sr.subCustomer||searchTerm)&&!anyInvoiceMatched)return; // nothing relevant on this statement
+    rows.sort((a,b)=>(a.dateISO||'').localeCompare(b.dateISO||''));
+    sections.push({st,rows});
+  });
+
+  if(!sections.length){
+    const em=h('div',{className:'empty-state'});em.innerHTML=I.calendar;
+    em.append(h('p',{className:'empty-state-title'},'No statements match'),
+      h('p',{className:'empty-state-hint'},searchTerm?'No invoice or packet number matches "'+sr.search+'"':'Try a different date range or sub-customer'));
+    c.append(em);return c;
+  }
+
+  sections.forEach(({st,rows})=>c.append(buildNJStatementReportSection(st,rows)));
+  return c;
+}
+
+function buildNJStatementReportSection(st,rows){
+  const wrap=h('div',{className:'panel',style:{padding:'var(--space-5)',marginBottom:'var(--space-5)'}});
+  const opening=parseFloat(st.opening_balance)||0;
+  const total=parseFloat(st.total)||0;
+  const closing=opening+total;
+
+  const header=h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'var(--space-4)',flexWrap:'wrap',gap:'var(--space-3)'}});
+  header.append(
+    h('div',{},
+      h('h3',{style:{fontFamily:'var(--font-serif)',fontSize:'var(--text-lg)',fontWeight:'600',marginBottom:'4px'}},njStatementPeriodLabel(st)),
+      h('p',{style:{fontSize:'var(--text-xs)',color:'var(--color-muted-foreground)'}},'Final'+(st.accounting_ref?' · Ref '+st.accounting_ref:'')),
+    ),
+    h('div',{style:{display:'flex',gap:'var(--space-5)',fontSize:'var(--text-sm)'}},
+      h('div',{style:{textAlign:'right'}},h('div',{style:{color:'var(--color-muted-foreground)',fontSize:'var(--text-xs)'}},'Opening'),h('div',{style:{fontFamily:'var(--font-mono)'}},fmtMoney(opening))),
+      h('div',{style:{textAlign:'right'}},h('div',{style:{color:'var(--color-muted-foreground)',fontSize:'var(--text-xs)'}},'This Statement'),h('div',{style:{fontFamily:'var(--font-mono)'}},fmtMoney(total))),
+      h('div',{style:{textAlign:'right'}},h('div',{style:{color:'var(--color-muted-foreground)',fontSize:'var(--text-xs)'}},'Closing'),h('div',{style:{fontFamily:'var(--font-mono)',fontWeight:'var(--font-semibold)'}},fmtMoney(closing))),
+    ),
+  );
+  wrap.append(header);
+
+  const panel=h('div',{style:{overflowX:'auto'}});
+  const tbl=h('table',{className:'table'});
+  tbl.append(h('thead',{},h('tr',{},
+    h('th',{className:'table-header'},'Date'),
+    h('th',{className:'table-header'},'Type'),
+    h('th',{className:'table-header'},'Reference'),
+    h('th',{className:'table-header'},'Sub-customer'),
+    h('th',{className:'table-header'},'Ship Date'),
+    h('th',{className:'table-header',style:{textAlign:'right'}},'Amount ($)'),
+  )));
+  const tb=h('tbody',{});
+  const typeLabel={invoice:'Invoice',credit:'Credit',payment:'Payment'};
+
+  rows.forEach(r=>{
+    const rowStyle={};
+    if(r.type!=='invoice')rowStyle.color='var(--color-muted-foreground)';
+
+    let typeCell,detailRows=[];
+    if(r.type==='invoice'&&r.pkts&&r.pkts.length){
+      detailRows=r.pkts.map(p=>{
+        const dr=h('tr',{style:{display:'none',background:'var(--color-secondary)',fontSize:'var(--text-sm)'}});
+        dr.append(
+          h('td',{}),
+          h('td',{}),
+          h('td',{style:{paddingLeft:'var(--space-6)',color:'var(--color-muted-foreground)'}},p.ref||''),
+          h('td',{colspan:'2'},(p.surname||'')+' ('+p.itemCount+' item'+(p.itemCount!==1?'s':'')+')'),
+          h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)'}},fmtMoney(p.amount)),
+        );
+        return dr;
+      });
+      let open=false;
+      const chevron=h('span',{style:{display:'inline-block',transition:'transform .15s',color:'var(--color-muted-foreground)',fontSize:'10px',marginRight:'6px'}},'▶');
+      const toggle=h('span',{style:{cursor:'pointer',display:'inline-flex',alignItems:'center'}},chevron,typeLabel[r.type]);
+      toggle.addEventListener('click',()=>{
+        open=!open;
+        chevron.style.transform=open?'rotate(90deg)':'';
+        detailRows.forEach(dr=>{dr.style.display=open?'':'none';});
+      });
+      typeCell=h('td',{},toggle);
+    }else{
+      typeCell=h('td',{},typeLabel[r.type]||'');
+    }
+
+    tb.append(h('tr',{style:rowStyle},
+      h('td',{},fmtDFromISO(r.dateISO)),
+      typeCell,
+      h('td',{style:{fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)'}},r.reference||''),
+      h('td',{},r.subCustomer||''),
+      h('td',{style:{fontSize:'var(--text-xs)'}},r.shipDateISO?fmtDFromISO(r.shipDateISO):''),
+      h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)'}},(r.amount<0?'(':'')+fmtMoney(Math.abs(r.amount))+(r.amount<0?')':'')),
+    ),...detailRows);
+  });
+
+  tbl.append(tb);panel.append(tbl);wrap.append(panel);
+  return wrap;
+}
+
+// =============================================================================
+// NATIONWIDE MONTHLY SPLIT (CSV)
+// =============================================================================
+// A raw data dump for the chosen month, one row per NJ packet item (Paula/Gabby split shown
+// both without and with the 8.5% discount, for manually checking Paula's invoice) PLUS one row
+// per NJ shipment (owed-to-fulfilment-partner vs charged-to-Nationwide -- the invoice includes
+// shipping, packets don't, so this is the only place that side of the invoice shows up). Shipment
+// rows skip the Paula/Gabby split columns entirely -- Paula never bills shipping, see
+// paulaExcludesShipping elsewhere in this file.
+function njMonthlySplitCsvData(dr){
+  const nj=njRetailer();
+  if(!nj||!dr)return{itemRows:[],shipRows:[],totals:null};
+  const discountMult=1-(nj.discount_pct||0)/100;
+
+  const pkts=S.packets.filter(p=>{
+    if(p.retailer_id!==nj.id)return false;
+    const d=parseStoredDate(p.date);
+    return d&&d>=dr.from&&d<=dr.to;
+  });
+
+  const itemRows=[];
+  pkts.forEach(pkt=>{
+    // Tax invoice is per shipping run, not per packet -- blank until the packet's actually been
+    // shipped/invoiced, which is the point (shows the gap between entry and invoicing).
+    const ti=pkt.shipping_run_id?S.taxInvoices.find(t=>t.shipping_run_id===pkt.shipping_run_id):null;
+    const invoiceNumber=ti?(ti.invoice_number||''):'';
+    const invoiceDateISO=ti&&ti.issue_date?ti.issue_date:'';
+    const invoiceDate=invoiceDateISO?fmtDFromISO(invoiceDateISO):'';
+    const packetDateObj=parseStoredDate(pkt.date);
+    S.allPacketItems.filter(i=>i.packet_id===pkt.id).forEach(i=>{
+      const raw=parseFloat(i.cost)||0;
+      const paulaPct=i.paula_pct!=null?i.paula_pct:0;
+      const gabbyPct=i.gabrielle_pct!=null?i.gabrielle_pct:(100-paulaPct);
+      const jt=S.jobTypes.find(j=>j.id===i.job_type_id);
+      itemRows.push({
+        date:pkt.date,ref:pkt.customer_ref||'',surname:pkt.surname||'',subCustomer:scName(pkt.sub_customer_id),
+        jobType:jt?jt.name:'',raw,paulaPct,gabbyPct,
+        paulaNoDiscount:raw*paulaPct/100,gabbyNoDiscount:raw*gabbyPct/100,
+        paulaWithDiscount:raw*discountMult*paulaPct/100,gabbyWithDiscount:raw*discountMult*gabbyPct/100,
+        paulaBilled:!!pkt.paula_billed,gabbyBilled:!!pkt.gabby_billed,
+        invoiceNumber,invoiceDate,invoiceDateISO,packetDateMs:packetDateObj?packetDateObj.getTime():0,
+      });
+    });
+  });
+
+  // Order by invoice date first (undated -- not yet invoiced -- sorts last), then packet date,
+  // so the CSV reads chronologically by when Nationwide was actually billed.
+  // invoiceNumber is a tiebreaker (not just invoiceDateISO) so that two invoices issued the same
+  // day never interleave -- every invoice's packets stay contiguous, which downloadNJMonthlySplitCsv
+  // relies on to slot that invoice's shipping row directly underneath its last packet.
+  itemRows.sort((a,b)=>{
+    const ad=a.invoiceDateISO||'9999-99-99',bd=b.invoiceDateISO||'9999-99-99';
+    if(ad!==bd)return ad<bd?-1:1;
+    if(a.invoiceNumber!==b.invoiceNumber)return a.invoiceNumber<b.invoiceNumber?-1:1;
+    return a.packetDateMs-b.packetDateMs;
+  });
+
+  // Shipping dates are stored ISO ('YYYY-MM-DD'), not the 'DD MMM YYYY' parseStoredDate() parses --
+  // parse to a real Date the same way filterShippingRuns() does elsewhere for a consistent compare.
+  const shipRows=(S.shippingRuns||[]).filter(r=>{
+    if(r.retailer_id!==nj.id||!r.ship_date)return false;
+    const d=new Date(r.ship_date+'T00:00:00');
+    return d>=dr.from&&d<=dr.to;
+  }).map(run=>({
+      date:fmtDFromISO(run.ship_date),ref:run.invoice_number||run.id,subCustomer:scName(run.sub_customer_id),
+      owed:parseFloat(run.shipping_cost)||0,charged:parseFloat(run.shipping_cost_billed??run.shipping_cost)||0,
+    }));
+
+  const sum=(arr,k)=>arr.reduce((s,r)=>s+r[k],0);
+  const totals={
+    packetCount:pkts.length,itemCount:itemRows.length,shipmentCount:shipRows.length,
+    nationwideNoDiscount:sum(itemRows,'raw'),nationwideWithDiscount:sum(itemRows,'raw')*discountMult,
+    paulaNoDiscount:sum(itemRows,'paulaNoDiscount'),paulaWithDiscount:sum(itemRows,'paulaWithDiscount'),
+    gabbyNoDiscount:sum(itemRows,'gabbyNoDiscount'),gabbyWithDiscount:sum(itemRows,'gabbyWithDiscount'),
+    shippingOwed:sum(shipRows,'owed'),shippingCharged:sum(shipRows,'charged'),
+  };
+  return{itemRows,shipRows,totals};
+}
+
+function njMonthlySplitCsvLabel(dr){
+  return fmtD(dr.from)+' - '+fmtD(dr.to);
+}
+
+// Column order is a single source of truth here (money/bool flags drive formatting) so
+// reordering columns is a one-line change instead of hand-editing three parallel arrays.
+const NJ_SPLIT_CSV_COLS=[
+  {key:'rowType',hdr:'Type'},
+  {key:'invoiceDate',hdr:'Tax Invoice Date'},
+  {key:'invoiceNumber',hdr:'Tax Invoice #'},
+  {key:'packetDate',hdr:'Packet Date'},
+  {key:'ref',hdr:'Ref'},
+  {key:'surname',hdr:'Surname'},
+  {key:'subCustomer',hdr:'Sub-customer'},
+  {key:'description',hdr:'Description'},
+  {key:'itemCost',hdr:'Item Cost (Raw)',money:true},
+  {key:'itemCostGST',hdr:'Item Cost +GST',money:true},
+  {key:'paulaPct',hdr:'Paula %'},
+  {key:'gabbyPct',hdr:'Gabby %'},
+  {key:'paulaNoDiscount',hdr:'Paula (No Discount)',money:true},
+  {key:'gabbyNoDiscount',hdr:'Gabby (No Discount)',money:true},
+  {key:'paulaWithDiscount',hdr:'Paula (8.5% Discount)',money:true},
+  {key:'gabbyWithDiscount',hdr:'Gabby (8.5% Discount)',money:true},
+  {key:'owed',hdr:'Owed to Fulfilment Partner',money:true},
+  {key:'charged',hdr:'Charged to Nationwide',money:true},
+  {key:'chargedLessGST',hdr:'Shipping Less GST',money:true},
+  {key:'paulaBilled',hdr:'Paula Billed',bool:true},
+  {key:'gabbyBilled',hdr:'Gabby Billed',bool:true},
+];
+function njSplitCsvRowValues(row){
+  return NJ_SPLIT_CSV_COLS.map(c=>{
+    const v=row[c.key];
+    if(c.money)return v!=null?v.toFixed(2):'';
+    if(c.bool)return v==null?'':(v?'Yes':'No');
+    return v??'';
+  });
+}
+
+function njValuationCsvLine(r){
+  return njSplitCsvRowValues({
+    rowType:'Valuation',invoiceDate:r.invoiceDate,invoiceNumber:r.invoiceNumber,packetDate:r.date,
+    ref:r.ref,surname:r.surname,subCustomer:r.subCustomer,description:r.jobType,itemCost:r.raw,itemCostGST:r.raw*1.15,
+    paulaPct:r.paulaPct,gabbyPct:r.gabbyPct,paulaNoDiscount:r.paulaNoDiscount,gabbyNoDiscount:r.gabbyNoDiscount,
+    paulaWithDiscount:r.paulaWithDiscount,gabbyWithDiscount:r.gabbyWithDiscount,
+    paulaBilled:r.paulaBilled,gabbyBilled:r.gabbyBilled,
+  }).map(esc).join(',');
+}
+function njShippingCsvLine(r){
+  return njSplitCsvRowValues({
+    // Charged to Nationwide also repeated into Item Cost +GST -- both are GST-inclusive invoice
+    // amounts, so summing that one column top-to-bottom (valuations + shipping) gives the whole
+    // invoice/statement total to check against.
+    rowType:'Shipping',packetDate:r.date,subCustomer:r.subCustomer,description:'Shipping',
+    invoiceNumber:r.ref,owed:r.owed,charged:r.charged,itemCostGST:r.charged,chargedLessGST:r.charged/1.15,
+  }).map(esc).join(',');
+}
+
+function downloadNJMonthlySplitCsv(dr,itemRows,shipRows){
+  const hdr=NJ_SPLIT_CSV_COLS.map(c=>c.hdr);
+
+  // Slot each shipment's row directly under the last packet of the SAME invoice, so an invoice's
+  // packets and its shipping cost read together -- rather than every shipment bunched at the
+  // bottom, which was hard to reconcile against. itemRows is already sorted with same-invoice
+  // rows contiguous (see njMonthlySplitCsvData), so a group only "closes" when the invoice number
+  // changes or the array ends. Shipments with no packet in this export (e.g. date range doesn't
+  // include any of that run's packets) still get listed, appended at the end.
+  const shipByInvoiceNumber=new Map(shipRows.map(r=>[r.ref,r]));
+  const usedInvoiceNumbers=new Set();
+  const lines=[];
+  itemRows.forEach((r,idx)=>{
+    lines.push(njValuationCsvLine(r));
+    const next=itemRows[idx+1];
+    const groupEnds=!next||next.invoiceNumber!==r.invoiceNumber;
+    if(groupEnds&&r.invoiceNumber&&shipByInvoiceNumber.has(r.invoiceNumber)){
+      lines.push(njShippingCsvLine(shipByInvoiceNumber.get(r.invoiceNumber)));
+      usedInvoiceNumbers.add(r.invoiceNumber);
+    }
+  });
+  shipRows.forEach(r=>{if(!usedInvoiceNumbers.has(r.ref))lines.push(njShippingCsvLine(r));});
+
+  const sum=(arr,k)=>arr.reduce((s,r)=>s+r[k],0);
+  const totalsRow=njSplitCsvRowValues({
+    rowType:'TOTAL',itemCost:sum(itemRows,'raw'),itemCostGST:sum(itemRows,'raw')*1.15+sum(shipRows,'charged'),
+    paulaNoDiscount:sum(itemRows,'paulaNoDiscount'),gabbyNoDiscount:sum(itemRows,'gabbyNoDiscount'),
+    paulaWithDiscount:sum(itemRows,'paulaWithDiscount'),gabbyWithDiscount:sum(itemRows,'gabbyWithDiscount'),
+    owed:sum(shipRows,'owed'),charged:sum(shipRows,'charged'),chargedLessGST:sum(shipRows,'charged')/1.15,
+  }).map(esc).join(',');
+  const csv=[hdr.join(','),...lines,totalsRow].join('\n');
+  const isoDate=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download='nationwide_split_'+isoDate(dr.from)+'_to_'+isoDate(dr.to)+'.csv';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  toast('CSV downloaded');
+}
+
+function renderNJMonthlySplitCsv(){
+  const sr=S.njMonthlySplitCsv;
+  const c=h('div',{});
+  c.append(renderBreadcrumb('Nationwide Monthly Split (CSV)'));
+  c.append(h('div',{className:'page-header'},h('h1',{className:'h1'},'Nationwide Monthly Split (CSV)')));
+
+  const fb=h('div',{style:{padding:'var(--space-5) 0',marginBottom:'var(--space-4)',display:'flex',flexDirection:'column',gap:'var(--space-3)'}});
+  const filterRow=h('div',{style:{display:'flex',gap:'var(--space-4)',alignItems:'flex-end'}});
+  const fmtD2=d=>new Date(d).toLocaleDateString('en-NZ',{day:'numeric',month:'short'});
+  const drSel=h('select',{className:'select',style:{width:'160px'}});
+  [['month','This Month'],['lastmonth','Last Month'],['thisfy','This FY'],['lastfy','Last FY'],['custom','Custom']].forEach(([v,l])=>{
+    let label=l;
+    if(v==='custom'&&sr.dateRange==='custom'&&sr.dateFrom&&sr.dateTo)label=fmtD2(sr.dateFrom)+' – '+fmtD2(sr.dateTo);
+    const o=h('option',{value:v},label);
+    if(sr.dateRange===v)o.selected=true;
+    drSel.append(o);
+  });
+  drSel.addEventListener('change',e=>{sr.dateRange=e.target.value;if(sr.dateRange!=='custom'){sr.dateFrom='';sr.dateTo='';}render();});
+  filterRow.append(fld('Date Range',drSel));
+  if(sr.dateRange==='custom'){
+    const fi=h('input',{type:'date',className:'input',style:{width:'150px'}});fi.value=sr.dateFrom;
+    const ti=h('input',{type:'date',className:'input',style:{width:'150px'}});ti.value=sr.dateTo;
+    fi.addEventListener('input',e=>{sr.dateFrom=e.target.value;render();});
+    ti.addEventListener('input',e=>{sr.dateTo=e.target.value;render();});
+    filterRow.append(fld('From',fi),fld('To',ti));
+  }
+  fb.append(filterRow);
+  c.append(fb);
+
+  let dr=null;
+  if(sr.dateRange!=='custom')dr=getDateRange(sr.dateRange);
+  else if(sr.dateFrom&&sr.dateTo)dr={from:new Date(sr.dateFrom),to:new Date(sr.dateTo+'T23:59:59')};
+
+  const{itemRows,shipRows,totals}=njMonthlySplitCsvData(dr);
+
+  if(!dr||(!itemRows.length&&!shipRows.length)){
+    const em=h('div',{className:'empty-state'});
+    em.append(h('p',{className:'empty-state-title'},dr?'No Nationwide activity in '+njMonthlySplitCsvLabel(dr):'Pick a date range'),h('p',{className:'empty-state-hint'},dr?'Try a different date range':'Or enter custom From/To dates'));
+    c.append(em);
+    return c;
+  }
+
+  const summary=h('div',{className:'panel',style:{padding:'var(--space-5)',marginBottom:'var(--space-5)'}});
+  summary.append(h('p',{style:{fontSize:'var(--text-sm)',color:'var(--color-muted-foreground)',marginBottom:'var(--space-4)'}},
+    totals.packetCount+' packet'+(totals.packetCount!==1?'s':'')+' · '+totals.itemCount+' item'+(totals.itemCount!==1?'s':'')+' · '+totals.shipmentCount+' shipment'+(totals.shipmentCount!==1?'s':'')+' in '+njMonthlySplitCsvLabel(dr)));
+
+  summary.append(h('h3',{style:{fontSize:'var(--text-sm)',fontWeight:'600',marginBottom:'var(--space-2)'}},'Valuations split'));
+  const totalsTbl=h('table',{className:'table'});
+  totalsTbl.append(h('thead',{},h('tr',{},
+    h('th',{className:'table-header'},''),
+    h('th',{className:'table-header',style:{textAlign:'right'}},'Without 8.5% Discount'),
+    h('th',{className:'table-header',style:{textAlign:'right'}},'With 8.5% Discount'),
+  )));
+  const totalsBody=h('tbody',{});
+  [['Nationwide (full split)',totals.nationwideNoDiscount,totals.nationwideWithDiscount],
+   ['Paula',totals.paulaNoDiscount,totals.paulaWithDiscount],
+   ['Gabby',totals.gabbyNoDiscount,totals.gabbyWithDiscount]].forEach(([label,noDisc,withDisc])=>{
+    totalsBody.append(h('tr',{},
+      h('td',{style:{fontWeight:'var(--font-medium)'}},label),
+      h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)'}},fmtMoney(noDisc)),
+      h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)'}},fmtMoney(withDisc)),
+    ));
+  });
+  totalsTbl.append(totalsBody);
+  summary.append(totalsTbl);
+
+  summary.append(h('h3',{style:{fontSize:'var(--text-sm)',fontWeight:'600',margin:'var(--space-5) 0 var(--space-2)'}},'Shipping (not split with Paula)'));
+  const shipTbl=h('table',{className:'table'});
+  shipTbl.append(h('thead',{},h('tr',{},
+    h('th',{className:'table-header'},''),
+    h('th',{className:'table-header',style:{textAlign:'right'}},'Amount'),
+  )));
+  const shipBody=h('tbody',{});
+  [['Owed to fulfilment partner',totals.shippingOwed],['Charged to Nationwide',totals.shippingCharged],['Margin',totals.shippingCharged-totals.shippingOwed]].forEach(([label,val])=>{
+    shipBody.append(h('tr',{},
+      h('td',{style:{fontWeight:'var(--font-medium)'}},label),
+      h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)'}},fmtMoney(val)),
+    ));
+  });
+  shipTbl.append(shipBody);
+  summary.append(shipTbl);
+
+  const dlBtn=h('button',{className:'btn btn-primary',style:{marginTop:'var(--space-5)'}},ic('download'),' Download CSV ('+(totals.itemCount+totals.shipmentCount)+' rows)');
+  dlBtn.addEventListener('click',()=>downloadNJMonthlySplitCsv(dr,itemRows,shipRows));
+  summary.append(dlBtn);
+
+  c.append(summary);
+  return c;
+}
+
 function shippingReportFilterBar(sr,title){
   const c=h('div',{});
   c.append(renderBreadcrumb(title));
@@ -4890,6 +5428,85 @@ function renderFulfilmentReport(){
   return c;
 }
 
+// =============================================================================
+// JAMIES MONTHLY SHIPPING (fulfilment partner invoicing report)
+// =============================================================================
+// Current month plus the last 6 completed ones, most recent first -- current month included so
+// Gabby can check the running total before the month closes, but the fulfilment partner always
+// invoices for a COMPLETE month, so the default selection (index 1) is last month, not this one.
+function jamiesMonthOptions(){
+  const names=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const now=new Date();
+  const opts=[];
+  for(let i=0;i<=6;i++){
+    const d=new Date(now.getFullYear(),now.getMonth()-i,1);
+    opts.push([d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'),names[d.getMonth()]+' '+d.getFullYear()]);
+  }
+  return opts;
+}
+
+function renderJamiesShippingReport(){
+  const sr=S.jamiesShippingReport;
+  const options=jamiesMonthOptions();
+  if(!sr.month)sr.month=options[1][0];
+
+  const c=h('div',{});
+  c.append(renderBreadcrumb('Jamies Monthly Shipping'));
+  c.append(h('div',{className:'page-header'},h('h1',{className:'h1'},'Jamies Monthly Shipping')));
+
+  const fb=h('div',{style:{padding:'var(--space-5) 0',marginBottom:'var(--space-4)',display:'flex',gap:'var(--space-4)',alignItems:'flex-end'}});
+  const monthSel=h('select',{className:'select',style:{width:'180px'}});
+  options.forEach(([key,label])=>{
+    const o=h('option',{value:key},label);
+    if(sr.month===key)o.selected=true;
+    monthSel.append(o);
+  });
+  monthSel.addEventListener('change',e=>{sr.month=e.target.value;render();});
+  fb.append(fld('Month',monthSel));
+  c.append(fb);
+
+  const monthStartISO=sr.month+'-01',monthEndISO=njMonthEndDate(sr.month);
+  const runs=(S.shippingRuns||[]).filter(r=>r.ship_date&&r.ship_date>=monthStartISO&&r.ship_date<=monthEndISO)
+    .sort((a,b)=>(a.ship_date||'').localeCompare(b.ship_date||''));
+
+  if(!runs.length){
+    const em=h('div',{className:'empty-state'});em.innerHTML=I.inbox;
+    em.append(h('p',{className:'empty-state-title'},'No shipments in this month'));
+    c.append(em);
+    return c;
+  }
+
+  const tbl=h('table',{className:'table'});
+  tbl.append(h('thead',{},h('tr',{},
+    h('th',{className:'table-header'},'Date'),
+    h('th',{className:'table-header'},'Shipping Number'),
+    h('th',{className:'table-header'},'Sub-customer'),
+    h('th',{className:'table-header',style:{textAlign:'right'}},'Amount'),
+  )));
+  const tbody=h('tbody',{});
+  let total=0;
+  runs.forEach(run=>{
+    // The raw amount entered at shipment time -- shipping_cost, never shipping_cost_billed (NJ's
+    // 10% markup is an internal Nationwide-billing figure, not what the fulfilment partner charged
+    // us) -- and left GST-inclusive as stored, since that's what they actually entered/invoice for.
+    const amount=parseFloat(run.shipping_cost)||0;
+    total+=amount;
+    tbody.append(h('tr',{},
+      h('td',{},fmtDFromISO(run.ship_date)),
+      h('td',{style:{fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)'}},run.invoice_number||run.packing_slip_number||''),
+      h('td',{},scName(run.sub_customer_id)),
+      h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)'}},fmtMoney(amount)),
+    ));
+  });
+  tbody.append(h('tr',{style:{fontWeight:'var(--font-semibold)',borderTop:'2px solid var(--color-border)'}},
+    h('td',{colspan:'3',style:{fontWeight:'var(--font-semibold)'}},'Total (incl GST)'),
+    h('td',{style:{textAlign:'right',fontWeight:'var(--font-semibold)'}},fmtMoney(total)),
+  ));
+  tbl.append(tbody);
+  c.append(tbl);
+  return c;
+}
+
 //
 function render(){
   const app=document.getElementById('app');app.innerHTML='';
@@ -4914,6 +5531,9 @@ function render(){
   else if(S.view==='shippingReport')main.append(renderShippingReport());
   else if(S.view==='fulfilmentReport')main.append(renderFulfilmentReport());
   else if(S.view==='taxInvoices')main.append(renderTaxInvoices());
+  else if(S.view==='njStatementsReport')main.append(renderNJStatementsReport());
+  else if(S.view==='njMonthlySplitCsv')main.append(renderNJMonthlySplitCsv());
+  else if(S.view==='jamiesShippingReport')main.append(renderJamiesShippingReport());
   else if(S.view==='admin')main.append(renderAdmin());
   else if(S.view==='njStatement')main.append(renderNJStatement());
   else if(S.view==='edit'&&S.editId){
