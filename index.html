@@ -4701,13 +4701,13 @@ function renderTaxInvoices(){
     if(dr&&inv.issue_date){const d=new Date(inv.issue_date);if(d<dr.from||d>dr.to)return false;}
     return true;
   });
-  // Was unsorted (DB insert/created order) -- date (most recent first) then invoice number, e.g.
-  // INV-0006/0007 issued the same day now stay in numeric order instead of whatever order they
-  // were created in.
+  // Was unsorted (DB insert/created order) -- date (most recent first) then invoice number
+  // (also most recent/highest first, so same-day invoices like INV-0006/0007 land in the same
+  // "newest first" order as everything else -- 0007 before 0006).
   invoices.sort((a,b)=>{
     const ad=a.issue_date||'',bd=b.issue_date||'';
     if(ad!==bd)return ad<bd?1:-1;
-    return (a.invoice_number||'').localeCompare(b.invoice_number||'');
+    return (b.invoice_number||'').localeCompare(a.invoice_number||'');
   });
 
   if(!invoices.length){
