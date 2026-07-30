@@ -4701,17 +4701,20 @@ function renderTaxInvoices(){
     if(dr&&inv.issue_date){const d=new Date(inv.issue_date);if(d<dr.from||d>dr.to)return false;}
     return true;
   });
+  // Was unsorted (DB insert/created order) -- date (most recent first) then invoice number, e.g.
+  // INV-0006/0007 issued the same day now stay in numeric order instead of whatever order they
+  // were created in.
+  invoices.sort((a,b)=>{
+    const ad=a.issue_date||'',bd=b.issue_date||'';
+    if(ad!==bd)return ad<bd?1:-1;
+    return (a.invoice_number||'').localeCompare(b.invoice_number||'');
+  });
 
   if(!invoices.length){
     const em=h('div',{className:'empty-state'});em.innerHTML=I.dollar;
     em.append(h('p',{className:'empty-state-title'},'No tax invoices in this period'),h('p',{className:'empty-state-hint'},'Tax invoices are created when NJ shipments are confirmed'));
     c.append(em);return c;
   }
-
-  // Tax invoices are always Gabby's, regardless of which G/P toggle is active while viewing
-  // this admin screen -- same fix as printInvoice() itself.
-  const gabby=S.users.find(u=>u.slug==='gabby')||{gst_registered:true,gst_rate:15};
-  const gstRate=gabby.gst_registered?(gabby.gst_rate||15)/100:0;
 
   const tbl=h('table',{className:'table'});
   tbl.append(h('thead',{},h('tr',{},
@@ -4727,16 +4730,11 @@ function renderTaxInvoices(){
 
   invoices.forEach(inv=>{
     const run=S.shippingRuns.find(r=>r.id===inv.shipping_run_id);
-    const retailer=run?S.retailers.find(r=>r.id===run.retailer_id):null;
-    const discountMult=1-((retailer?.discount_pct)||0)/100;
     const runPackets=S.packets.filter(p=>p.shipping_run_id===inv.shipping_run_id);
-    const valuationsTotal=runPackets.reduce((sum,p)=>{
-      const items=S.allPacketItems.filter(i=>i.packet_id===p.id);
-      return sum+items.reduce((s,i)=>(s+(parseFloat(i.cost)||0)*discountMult),0);
-    },0);
-    const shippingExGST=run?(parseFloat(run.shipping_cost_billed??run.shipping_cost)||0)/1.15:0;
-    const subtotal=valuationsTotal+shippingExGST;
-    const total=subtotal*(1+gstRate);
+    // Full invoice amount, no discount -- same math as the actual Tax Invoice PDF (printInvoice()),
+    // matching CLAUDE.md rule 19. Previously hand-rolled its own calc that wrongly applied the
+    // retailer's discount_pct to the valuation total, under-reporting every NJ invoice by ~8.5%.
+    const total=njTaxInvoiceAmount(inv).total;
     grandTotal+=total;
 
     const reprintBtn=h('button',{className:'btn-link',style:{fontSize:'var(--text-xs)'}},'Reprint');
