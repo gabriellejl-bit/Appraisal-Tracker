@@ -92,6 +92,7 @@ let S={
   taxInvoicesReport:{dateRange:'thisfy',dateFrom:'',dateTo:''},
   njStatementsReport:{dateRange:'thisfy',dateFrom:'',dateTo:'',subCustomer:'',search:''},
   njMonthlySplitCsv:{dateRange:'lastmonth',dateFrom:'',dateTo:''},
+  directMonthlySplitCsv:{dateRange:'lastmonth',dateFrom:'',dateTo:''},
   jamiesShippingReport:{month:''},
   toast:null,tt:null,ready:false,online:true,user:'gabby',
   currentUser:null,  // full user row from users table
@@ -779,7 +780,7 @@ function renderNav(){
     toggleBtns.append(btn);
   });
   const toggle=h('div',{className:'user-toggle'},toggleBtns,userInfo);
-  const isReportsView=['reports','customerReport','billingRunsReport','shippingReport','fulfilmentReport','taxInvoices','njStatementsReport','njMonthlySplitCsv','jamiesShippingReport'].includes(S.view);
+  const isReportsView=['reports','customerReport','billingRunsReport','shippingReport','fulfilmentReport','taxInvoices','njStatementsReport','njMonthlySplitCsv','directMonthlySplitCsv','jamiesShippingReport'].includes(S.view);
   const newBtn=h('button',{className:'btn btn-primary has-icon',style:{justifySelf:'start'},onClick:()=>{S.view='form';render();}},h('span',{htmlContent:'<svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4.36134 12V0H7.61344V12H4.36134ZM0 7.58442V4.41559H12V7.58442H0Z" fill="white"/></svg>',style:{display:'inline-flex',alignItems:'center'}}),'NEW PACKET');
   const isOnline=S.online;
 
@@ -3506,6 +3507,19 @@ function renderReports(){
   );
   splitCard.append(splitBody);grid.append(splitCard);
 
+  // Direct Monthly Split (CSV) card
+  const dSplitCard=h('div',{className:'panel',style:{cursor:'pointer',transition:'box-shadow .2s,transform .15s'},
+    onClick:()=>{S.view='directMonthlySplitCsv';render();}});
+  dSplitCard.addEventListener('mouseenter',()=>{dSplitCard.style.boxShadow='var(--shadow-md)';dSplitCard.style.transform='translateY(-2px)';});
+  dSplitCard.addEventListener('mouseleave',()=>{dSplitCard.style.boxShadow='';dSplitCard.style.transform='';});
+  const dSplitBody=h('div',{style:{padding:'28px 24px'}});
+  dSplitBody.append(
+    h('div',{style:{width:'44px',height:'44px',background:'var(--color-orange-50)',borderRadius:'12px',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'16px',color:'var(--color-orange-600)'},htmlContent:I.list}),
+    h('h3',{style:{fontFamily:'var(--font-serif)',fontSize:'17px',fontWeight:'600',color:'var(--color-foreground)',marginBottom:'8px'}},'Direct Monthly Split (CSV)'),
+    h('p',{style:{fontSize:'13px',color:'var(--color-muted-foreground)',lineHeight:'1.5'}},'Every Direct packet for a chosen month, with Paula/Gabby split shown alongside packing slip and shipping detail. Download as CSV.'),
+  );
+  dSplitCard.append(dSplitBody);grid.append(dSplitCard);
+
   // Jamies Monthly Shipping card
   const jamiesCard=h('div',{className:'panel',style:{cursor:'pointer',transition:'box-shadow .2s,transform .15s'},
     onClick:()=>{S.view='jamiesShippingReport';render();}});
@@ -5242,6 +5256,264 @@ function renderNJMonthlySplitCsv(){
   return c;
 }
 
+// =============================================================================
+// DIRECT MONTHLY SPLIT (CSV)
+// =============================================================================
+// Same shape as the Nationwide Monthly Split (CSV) above, adapted for Direct: no discount (so
+// Paula/Gabby each get one raw-cost column, not a no/with-discount pair), and no tax_invoices
+// table to join through -- Direct's reference number (packing slip, not tax invoice) lives
+// directly on the packet's own shipping_runs row via packets.shipping_run_id.
+function directMonthlySplitCsvData(dr){
+  const nj=njRetailer();
+  if(!nj||!dr)return{itemRows:[],shipRows:[],totals:null};
+
+  // "Direct" here is the billing-landing sense (see renderBillingLanding()'s directOpt), not a
+  // single retailer row: Alexandra + Queenstown + the Direct retailer itself -- everything Gabby
+  // invoices directly to the retailer, as opposed to Nationwide's statement path. Alexandra/
+  // Queenstown never actually ship (family-owned, requires_shipping=false), so their packets
+  // just come through with no packing slip # -- same blank-until-shipped shape NJ packets get
+  // before they're invoiced.
+  const pkts=S.packets.filter(p=>{
+    if(p.retailer_id===nj.id)return false;
+    const d=parseStoredDate(p.date);
+    return d&&d>=dr.from&&d<=dr.to;
+  });
+
+  const shippingRunsById=new Map(S.shippingRuns.map(r=>[r.id,r]));
+
+  const itemRows=[];
+  pkts.forEach(pkt=>{
+    // Packing slip # / date come straight off the packet's own shipping run -- no separate
+    // tax_invoices-style table to join through for Direct.
+    const run=pkt.shipping_run_id?shippingRunsById.get(pkt.shipping_run_id):null;
+    const slipNumber=run?(run.packing_slip_number||''):'';
+    const slipDateISO=run&&run.ship_date?run.ship_date:'';
+    const slipDate=slipDateISO?fmtDFromISO(slipDateISO):'';
+    const packetDateObj=parseStoredDate(pkt.date);
+    // Spans three retailers (Alexandra/Queenstown/Direct), so a stale sub_customer_id left
+    // over from a retailer switch (CLAUDE.md rule 24) is far more likely to surface here than
+    // in the single-retailer NJ report -- only trust it when it genuinely belongs to this
+    // packet's own retailer, same guard as packetRetailerLabel().
+    const sc=pkt.sub_customer_id?S.subCustomers.find(x=>x.id===pkt.sub_customer_id&&x.retailer_id===pkt.retailer_id):null;
+    S.allPacketItems.filter(i=>i.packet_id===pkt.id).forEach(i=>{
+      const raw=parseFloat(i.cost)||0;
+      const paulaPct=i.paula_pct!=null?i.paula_pct:0;
+      const gabbyPct=i.gabrielle_pct!=null?i.gabrielle_pct:(100-paulaPct);
+      const jt=S.jobTypes.find(j=>j.id===i.job_type_id);
+      itemRows.push({
+        retailer:retailerName(pkt.retailer_id),
+        date:pkt.date,ref:pkt.customer_ref||'',surname:pkt.surname||'',subCustomer:sc?sc.name:'',
+        jobType:jt?jt.name:'',raw,paulaPct,gabbyPct,
+        paula:raw*paulaPct/100,gabby:raw*gabbyPct/100,
+        paulaBilled:!!pkt.paula_billed,gabbyBilled:!!pkt.gabby_billed,
+        slipNumber,slipDate,slipDateISO,packetDateMs:packetDateObj?packetDateObj.getTime():0,
+      });
+    });
+  });
+
+  // Same contiguous-grouping sort key as the NJ version (slip date -> slip # -> packet date),
+  // so a shipment's packets stay together and its shipping row can slot directly underneath them.
+  itemRows.sort((a,b)=>{
+    const ad=a.slipDateISO||'9999-99-99',bd=b.slipDateISO||'9999-99-99';
+    if(ad!==bd)return ad<bd?-1:1;
+    if(a.slipNumber!==b.slipNumber)return a.slipNumber<b.slipNumber?-1:1;
+    return a.packetDateMs-b.packetDateMs;
+  });
+
+  // Alexandra/Queenstown never generate shipping_runs rows, so this naturally only ever picks
+  // up Direct's own shipments -- filtering on "not NJ" (rather than a specific retailer id)
+  // just keeps this consistent with the packet filter above.
+  const shipRows=(S.shippingRuns||[]).filter(r=>{
+    if(r.retailer_id===nj.id||!r.ship_date)return false;
+    const d=new Date(r.ship_date+'T00:00:00');
+    return d>=dr.from&&d<=dr.to;
+  }).map(run=>({
+      date:fmtDFromISO(run.ship_date),ref:run.packing_slip_number||run.id,subCustomer:scName(run.sub_customer_id),
+      owed:parseFloat(run.shipping_cost)||0,charged:parseFloat(run.shipping_cost_billed??run.shipping_cost)||0,
+    }));
+
+  const sum=(arr,k)=>arr.reduce((s,r)=>s+r[k],0);
+  const totals={
+    packetCount:pkts.length,itemCount:itemRows.length,shipmentCount:shipRows.length,
+    directTotal:sum(itemRows,'raw'),
+    paulaTotal:sum(itemRows,'paula'),gabbyTotal:sum(itemRows,'gabby'),
+    shippingOwed:sum(shipRows,'owed'),shippingCharged:sum(shipRows,'charged'),
+  };
+  return{itemRows,shipRows,totals};
+}
+
+function directMonthlySplitCsvLabel(dr){
+  return fmtD(dr.from)+' - '+fmtD(dr.to);
+}
+
+const DIRECT_SPLIT_CSV_COLS=[
+  {key:'rowType',hdr:'Type'},
+  {key:'slipDate',hdr:'Packing Slip Date'},
+  {key:'slipNumber',hdr:'Packing Slip #'},
+  {key:'packetDate',hdr:'Packet Date'},
+  {key:'retailer',hdr:'Retailer'},
+  {key:'ref',hdr:'Ref'},
+  {key:'surname',hdr:'Surname'},
+  {key:'subCustomer',hdr:'Sub-customer'},
+  {key:'description',hdr:'Description'},
+  {key:'itemCost',hdr:'Item Cost (Raw)',money:true},
+  {key:'itemCostGST',hdr:'Item Cost +GST',money:true},
+  {key:'paulaPct',hdr:'Paula %'},
+  {key:'gabbyPct',hdr:'Gabby %'},
+  {key:'paula',hdr:'Paula',money:true},
+  {key:'gabby',hdr:'Gabby',money:true},
+  {key:'owed',hdr:'Owed to Fulfilment Partner',money:true},
+  {key:'charged',hdr:'Charged to Customer',money:true},
+  {key:'chargedLessGST',hdr:'Shipping Less GST',money:true},
+  {key:'paulaBilled',hdr:'Paula Billed',bool:true},
+  {key:'gabbyBilled',hdr:'Gabby Billed',bool:true},
+];
+function directSplitCsvRowValues(row){
+  return DIRECT_SPLIT_CSV_COLS.map(c=>{
+    const v=row[c.key];
+    if(c.money)return v!=null?v.toFixed(2):'';
+    if(c.bool)return v==null?'':(v?'Yes':'No');
+    return v??'';
+  });
+}
+
+function directValuationCsvLine(r){
+  return directSplitCsvRowValues({
+    rowType:'Valuation',slipDate:r.slipDate,slipNumber:r.slipNumber,packetDate:r.date,retailer:r.retailer,
+    ref:r.ref,surname:r.surname,subCustomer:r.subCustomer,description:r.jobType,itemCost:r.raw,itemCostGST:r.raw*1.15,
+    paulaPct:r.paulaPct,gabbyPct:r.gabbyPct,paula:r.paula,gabby:r.gabby,
+    paulaBilled:r.paulaBilled,gabbyBilled:r.gabbyBilled,
+  }).map(esc).join(',');
+}
+function directShippingCsvLine(r){
+  return directSplitCsvRowValues({
+    // Charged to Customer also repeated into Item Cost +GST -- both are GST-inclusive amounts,
+    // so summing that one column top-to-bottom (valuations + shipping) gives the whole
+    // GST-inclusive total to check against Direct's own records.
+    rowType:'Shipping',packetDate:r.date,retailer:'Direct',subCustomer:r.subCustomer,description:'Shipping',
+    slipNumber:r.ref,owed:r.owed,charged:r.charged,itemCostGST:r.charged,chargedLessGST:r.charged/1.15,
+  }).map(esc).join(',');
+}
+
+function downloadDirectMonthlySplitCsv(dr,itemRows,shipRows){
+  const hdr=DIRECT_SPLIT_CSV_COLS.map(c=>c.hdr);
+
+  // Slot each shipment's row directly under the last packet of the SAME packing slip -- same
+  // contiguous-group logic as downloadNJMonthlySplitCsv, keyed by slip # instead of invoice #.
+  const shipBySlipNumber=new Map(shipRows.map(r=>[r.ref,r]));
+  const usedSlipNumbers=new Set();
+  const lines=[];
+  itemRows.forEach((r,idx)=>{
+    lines.push(directValuationCsvLine(r));
+    const next=itemRows[idx+1];
+    const groupEnds=!next||next.slipNumber!==r.slipNumber;
+    if(groupEnds&&r.slipNumber&&shipBySlipNumber.has(r.slipNumber)){
+      lines.push(directShippingCsvLine(shipBySlipNumber.get(r.slipNumber)));
+      usedSlipNumbers.add(r.slipNumber);
+    }
+  });
+  shipRows.forEach(r=>{if(!usedSlipNumbers.has(r.ref))lines.push(directShippingCsvLine(r));});
+
+  const sum=(arr,k)=>arr.reduce((s,r)=>s+r[k],0);
+  const totalsRow=directSplitCsvRowValues({
+    rowType:'TOTAL',itemCost:sum(itemRows,'raw'),itemCostGST:sum(itemRows,'raw')*1.15+sum(shipRows,'charged'),
+    paula:sum(itemRows,'paula'),gabby:sum(itemRows,'gabby'),
+    owed:sum(shipRows,'owed'),charged:sum(shipRows,'charged'),chargedLessGST:sum(shipRows,'charged')/1.15,
+  }).map(esc).join(',');
+  const csv=[hdr.join(','),...lines,totalsRow].join('\n');
+  const isoDate=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download='direct_split_'+isoDate(dr.from)+'_to_'+isoDate(dr.to)+'.csv';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  toast('CSV downloaded');
+}
+
+function renderDirectMonthlySplitCsv(){
+  const sr=S.directMonthlySplitCsv;
+  const c=h('div',{});
+  c.append(renderBreadcrumb('Direct Monthly Split (CSV)'));
+  c.append(h('div',{className:'page-header'},h('h1',{className:'h1'},'Direct Monthly Split (CSV)')));
+
+  const fb=h('div',{style:{padding:'var(--space-5) 0',marginBottom:'var(--space-4)',display:'flex',flexDirection:'column',gap:'var(--space-3)'}});
+  const filterRow=h('div',{style:{display:'flex',gap:'var(--space-4)',alignItems:'flex-end'}});
+  const fmtD2=d=>new Date(d).toLocaleDateString('en-NZ',{day:'numeric',month:'short'});
+  const drSel=h('select',{className:'select',style:{width:'160px'}});
+  [['month','This Month'],['lastmonth','Last Month'],['thisfy','This FY'],['lastfy','Last FY'],['custom','Custom']].forEach(([v,l])=>{
+    let label=l;
+    if(v==='custom'&&sr.dateRange==='custom'&&sr.dateFrom&&sr.dateTo)label=fmtD2(sr.dateFrom)+' – '+fmtD2(sr.dateTo);
+    const o=h('option',{value:v},label);
+    if(sr.dateRange===v)o.selected=true;
+    drSel.append(o);
+  });
+  drSel.addEventListener('change',e=>{sr.dateRange=e.target.value;if(sr.dateRange!=='custom'){sr.dateFrom='';sr.dateTo='';}render();});
+  filterRow.append(fld('Date Range',drSel));
+  if(sr.dateRange==='custom'){
+    const fi=h('input',{type:'date',className:'input',style:{width:'150px'}});fi.value=sr.dateFrom;
+    const ti=h('input',{type:'date',className:'input',style:{width:'150px'}});ti.value=sr.dateTo;
+    fi.addEventListener('input',e=>{sr.dateFrom=e.target.value;render();});
+    ti.addEventListener('input',e=>{sr.dateTo=e.target.value;render();});
+    filterRow.append(fld('From',fi),fld('To',ti));
+  }
+  fb.append(filterRow);
+  c.append(fb);
+
+  let dr=null;
+  if(sr.dateRange!=='custom')dr=getDateRange(sr.dateRange);
+  else if(sr.dateFrom&&sr.dateTo)dr={from:new Date(sr.dateFrom),to:new Date(sr.dateTo+'T23:59:59')};
+
+  const{itemRows,shipRows,totals}=directMonthlySplitCsvData(dr);
+
+  if(!dr||(!itemRows.length&&!shipRows.length)){
+    const em=h('div',{className:'empty-state'});
+    em.append(h('p',{className:'empty-state-title'},dr?'No Direct activity in '+directMonthlySplitCsvLabel(dr):'Pick a date range'),h('p',{className:'empty-state-hint'},dr?'Try a different date range':'Or enter custom From/To dates'));
+    c.append(em);
+    return c;
+  }
+
+  const summary=h('div',{className:'panel',style:{padding:'var(--space-5)',marginBottom:'var(--space-5)'}});
+  summary.append(h('p',{style:{fontSize:'var(--text-sm)',color:'var(--color-muted-foreground)',marginBottom:'var(--space-4)'}},
+    totals.packetCount+' packet'+(totals.packetCount!==1?'s':'')+' · '+totals.itemCount+' item'+(totals.itemCount!==1?'s':'')+' · '+totals.shipmentCount+' shipment'+(totals.shipmentCount!==1?'s':'')+' in '+directMonthlySplitCsvLabel(dr)));
+
+  summary.append(h('h3',{style:{fontSize:'var(--text-sm)',fontWeight:'600',marginBottom:'var(--space-2)'}},'Valuations split'));
+  const totalsTbl=h('table',{className:'table'});
+  totalsTbl.append(h('thead',{},h('tr',{},
+    h('th',{className:'table-header'},''),
+    h('th',{className:'table-header',style:{textAlign:'right'}},'Amount'),
+  )));
+  const totalsBody=h('tbody',{});
+  [['Direct (full split)',totals.directTotal],['Paula',totals.paulaTotal],['Gabby',totals.gabbyTotal]].forEach(([label,val])=>{
+    totalsBody.append(h('tr',{},
+      h('td',{style:{fontWeight:'var(--font-medium)'}},label),
+      h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)'}},fmtMoney(val)),
+    ));
+  });
+  totalsTbl.append(totalsBody);
+  summary.append(totalsTbl);
+
+  summary.append(h('h3',{style:{fontSize:'var(--text-sm)',fontWeight:'600',margin:'var(--space-5) 0 var(--space-2)'}},'Shipping (not split with Paula)'));
+  const shipTbl=h('table',{className:'table'});
+  shipTbl.append(h('thead',{},h('tr',{},
+    h('th',{className:'table-header'},''),
+    h('th',{className:'table-header',style:{textAlign:'right'}},'Amount'),
+  )));
+  const shipBody=h('tbody',{});
+  [['Owed to fulfilment partner',totals.shippingOwed],['Charged to Customer',totals.shippingCharged],['Margin',totals.shippingCharged-totals.shippingOwed]].forEach(([label,val])=>{
+    shipBody.append(h('tr',{},
+      h('td',{style:{fontWeight:'var(--font-medium)'}},label),
+      h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)'}},fmtMoney(val)),
+    ));
+  });
+  shipTbl.append(shipBody);
+  summary.append(shipTbl);
+
+  const dlBtn=h('button',{className:'btn btn-primary',style:{marginTop:'var(--space-5)'}},ic('download'),' Download CSV ('+(totals.itemCount+totals.shipmentCount)+' rows)');
+  dlBtn.addEventListener('click',()=>downloadDirectMonthlySplitCsv(dr,itemRows,shipRows));
+  summary.append(dlBtn);
+
+  c.append(summary);
+  return c;
+}
+
 function shippingReportFilterBar(sr,title){
   const c=h('div',{});
   c.append(renderBreadcrumb(title));
@@ -5531,6 +5803,7 @@ function render(){
   else if(S.view==='taxInvoices')main.append(renderTaxInvoices());
   else if(S.view==='njStatementsReport')main.append(renderNJStatementsReport());
   else if(S.view==='njMonthlySplitCsv')main.append(renderNJMonthlySplitCsv());
+  else if(S.view==='directMonthlySplitCsv')main.append(renderDirectMonthlySplitCsv());
   else if(S.view==='jamiesShippingReport')main.append(renderJamiesShippingReport());
   else if(S.view==='admin')main.append(renderAdmin());
   else if(S.view==='njStatement')main.append(renderNJStatement());
