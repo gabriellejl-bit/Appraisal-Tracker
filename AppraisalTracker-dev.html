@@ -2542,6 +2542,7 @@ td:last-child{text-align:right;}
 <thead><tr><th>Issued Date</th><th>Invoice No</th><th>Description</th><th style="text-align:right">Total Amount ($)</th><th style="text-align:right">Total Paid ($)</th><th style="text-align:right">Balance Due ($)</th></tr></thead>
 <tbody>${rowsHtml}</tbody>
 </table>
+<div style="page-break-inside:avoid;margin-top:20mm;">
 <table class="aging-table">
 <tbody>
 ${summaryRowsHtml}
@@ -2553,7 +2554,8 @@ ${summaryRowsHtml}
   <div>Account Name: ${PGL_BANK_ACCOUNT_NAME}</div>
   <div>Account Number: ${PGL_BANK_ACCOUNT_NUMBER}</div>
 </div>
-<div class="page-footer"><span>Page 1 of 1</span><span>Balance due: $${fmtSigned(balanceDue)}</span></div>
+<div class="page-footer"><span>PGL Appraisals</span><span>Balance due: $${fmtSigned(balanceDue)}</span></div>
+</div>
 <script>window.onload=function(){window.focus();window.print();};<\/script>
 </body></html>`);
   win.document.close();
