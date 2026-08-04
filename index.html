@@ -2542,13 +2542,20 @@ td:last-child{text-align:right;}
 <thead><tr><th>Issued Date</th><th>Invoice No</th><th>Description</th><th style="text-align:right">Total Amount ($)</th><th style="text-align:right">Total Paid ($)</th><th style="text-align:right">Balance Due ($)</th></tr></thead>
 <tbody>${rowsHtml}</tbody>
 </table>
-<div style="page-break-inside:avoid;margin-top:20mm;">
+<div style="page-break-inside:avoid;">
 <table class="aging-table">
 <tbody>
 ${summaryRowsHtml}
 </tbody>
 <tfoot><tr class="total-row"><td><strong>Balance due</strong></td><td><strong>$${fmtSigned(balanceDue)}</strong></td></tr></tfoot>
 </table>
+</div>
+<!-- padding-top (not margin-top) deliberately: margin on the first box of a fresh printed page
+     can collapse away in Chrome's print engine (confirmed live -- a margin-top here rendered as
+     no gap at all when this block landed on page 2). Padding on an atomic page-break-inside:avoid
+     block doesn't collapse and isn't shared with body's own top padding, so it can't affect page
+     1's own margin -- it only ever adds space directly above Payment Details itself. -->
+<div style="page-break-inside:avoid;padding-top:20mm;">
 <div style="margin-top:32px;padding-top:12px;border-top:1px solid #ddd;font-size:12px;">
   <div style="font-weight:700;margin-bottom:4px;">Payment Details</div>
   <div>Account Name: ${PGL_BANK_ACCOUNT_NAME}</div>
