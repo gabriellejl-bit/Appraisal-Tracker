@@ -2265,7 +2265,15 @@ function njPrevMonthKeyOf(monthKey){
 // total. This is the core fix for the old carry-forward bug: nothing here trusts another
 // statement's cached number. Callers freeze the result at save time for their own historical
 // reprint (see saveNJDraft()), but never read a DIFFERENT statement's frozen result as input.
-function njCurrentBalance(asOfDateISO){
+// excludeStatementId: pass the statement currently being built so ITS OWN new lines never count
+// as "prior" balance -- see saveNJDraft()'s opening_balance call. Without this, a backlog invoice
+// issued before the opening cutoff but never presented until THIS statement (e.g. the very first
+// statement ever run, or any invoice that's sat unbilled a while) gets attached to the draft
+// before this function runs, satisfies "nj_statement_id set + issue_date<=asOf", and is silently
+// double-counted -- once as opening balance, once as this period's own new-invoice total. Real
+// bug found live in production: a first-ever NJ statement showed a $63 opening balance that
+// should have been $0, from two backlog invoices issued weeks before the statement period.
+function njCurrentBalance(asOfDateISO,excludeStatementId){
   const nj=njRetailer();
   const asOf=asOfDateISO||todayISO();
   const asOfLocal=isoToLocalDate(asOf);
@@ -2273,7 +2281,7 @@ function njCurrentBalance(asOfDateISO){
   // retroactively shrink a historical cutoff's balance (e.g. an opening-balance snapshot for a
   // past month-end), or two different asOf dates computed at the same moment can silently
   // double-subtract the same payment. Both callers below are asOf-aware for exactly this reason.
-  const unpaid=(S.taxInvoices||[]).filter(ti=>nj&&ti.retailer_id===nj.id&&ti.status==='active'&&(!ti.paid_date||ti.paid_date>asOf)&&ti.nj_statement_id&&ti.issue_date&&ti.issue_date<=asOf);
+  const unpaid=(S.taxInvoices||[]).filter(ti=>nj&&ti.retailer_id===nj.id&&ti.status==='active'&&(!ti.paid_date||ti.paid_date>asOf)&&ti.nj_statement_id&&ti.nj_statement_id!==excludeStatementId&&ti.issue_date&&ti.issue_date<=asOf);
   const buckets={current:0,d30:0,d60:0,d90:0};
   let total=0;
   unpaid.forEach(ti=>{
@@ -2340,14 +2348,17 @@ async function saveNJDraft(){
   // the original bug). This statement's own frozen numbers are safe to reprint later precisely
   // because nothing downstream ever reads them back in as an input to a DIFFERENT statement's
   // calculation -- the next statement always recomputes its own opening balance fresh.
-  // Two different cutoffs, deliberately: Opening Balance is "as of the START of this period"
-  // (excludes this period's own new invoices/payments/credits by construction, since njCurrentBalance
-  // is now asOf-aware -- see its own comment). The aging breakdown is "as of THIS statement's own
-  // date" -- the true current/closing balance, including this period's new invoices, which is why
-  // it must run AFTER the local nj_statement_id patch above.
+  // Two different cutoffs, deliberately: Opening Balance is "as of the START of this period" --
+  // excludeStatementId=draftId keeps this statement's own new lines out of it explicitly (date
+  // alone isn't enough: a backlog invoice issued before openingCutoff but first presented on
+  // THIS statement would otherwise satisfy njCurrentBalance's own "already presented" check the
+  // instant the reattach loop above sets its nj_statement_id, see njCurrentBalance()'s comment).
+  // The aging breakdown is "as of THIS statement's own date" -- the true current/closing balance,
+  // including this period's new invoices, which is why it must run AFTER the reattach loop above
+  // and must NOT exclude draftId.
   const openingCutoff=njMonthEndDate(njPrevMonthKeyOf(b.month));
   const stmtCutoff=njMonthEndDate(b.month);
-  const opening_balance=njCurrentBalance(openingCutoff).total;
+  const opening_balance=njCurrentBalance(openingCutoff,draftId).total;
   const buckets=njCurrentBalance(stmtCutoff).buckets;
   await sbUpdate('nj_statements',draftId,{
     subtotal,gst,total,
@@ -2573,8 +2584,10 @@ function renderNJStatementBuilder(){
   // Opening Balance is a live figure (recomputed fresh every render, not stored) -- it's what
   // gets FROZEN onto this statement at Save Draft time (see saveNJDraft()), but here on the
   // builder it always reflects the current, real-time state so it can't go stale between saves.
+  // excludeStatementId=b.draftId (same reasoning as saveNJDraft()'s own call) so re-opening an
+  // already-saved draft doesn't show its own lines as "prior" balance.
   const openingCutoff=njMonthEndDate(njPrevMonthKeyOf(b.month));
-  const opening=njCurrentBalance(openingCutoff);
+  const opening=njCurrentBalance(openingCutoff,b.draftId);
   c.append(h('div',{style:{display:'flex',justifyContent:'space-between',padding:'var(--space-3) var(--space-4)',background:'var(--color-secondary)',borderRadius:'var(--radius-md)',marginBottom:'var(--space-4)'}},
     h('span',{},'Opening balance (as of '+fmtDFromISO(openingCutoff)+')'),
     h('span',{style:{fontFamily:'var(--font-mono)',fontWeight:'var(--font-semibold)'}},fmtMoney(opening.total)),
