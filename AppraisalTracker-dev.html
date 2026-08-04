@@ -2436,7 +2436,13 @@ function printStatement(statementId,existingWin){
     if(l.line_type==='invoice'){
       const ti=S.taxInvoices.find(t=>t.id===l.tax_invoice_id);
       dateISO=ti?ti.issue_date:'';invoiceNo=ti?(ti.invoice_number||ti.id):'';
-      description=l.sub_customer_name||'';
+      // Per Nationwide's requested format: shows "Nationwide Jewellers - <membership number>"
+      // (sub_customers.bill_to_line) instead of the sub-customer's own name -- looked up live via
+      // the tax invoice's sub_customer_id rather than the frozen l.sub_customer_name snapshot, so
+      // a reprint always reflects the current membership number, not whatever it was at save time.
+      // Blank (not a name fallback) when bill_to_line isn't set yet, per instruction.
+      const sc=ti&&ti.sub_customer_id?S.subCustomers.find(x=>x.id===ti.sub_customer_id):null;
+      description=sc?.bill_to_line||'';
       amountCol=amt;
     }else if(l.line_type==='credit'){
       const cn=S.njCreditNotes.find(c=>c.id===l.credit_note_id);
@@ -4098,7 +4104,9 @@ td:nth-child(2),td:nth-child(3),td:nth-child(4){text-align:right;}
 </div>
 <div class="header-grid">
   <div>
-    <div class="label">To</div>
+    <div class="label">Bill To</div>
+    <div class="value">${subCustRec?.bill_to_line||''}</div>
+    <div class="label" style="margin-top:16px;">Deliver To</div>
     <div class="value">${subCust||retailer?.name||''}</div>
     ${toAddr}
   </div>
