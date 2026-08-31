@@ -32,6 +32,7 @@ Rules:
 Billing tracker for jewellery appraisals. Paula and Gabby invoice jewellery retailers independently based on per-job cost split percentages. Single HTML file + external stylesheet (`styles.css`), vanilla JS, Supabase (PostgreSQL via REST, no SDK), hosted on GitHub Pages.
 
 Full project reference: `PROJECT.md` — read for DB schema, business rules, and design system details.
+Refreshing the dev DB from prod: `DEV-DB-REFRESH.md` — read before attempting it; there are two traps that waste hours.
 
 ## Architecture
 
