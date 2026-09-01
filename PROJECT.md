@@ -86,6 +86,11 @@ When adding a new table: Supabase's SQL editor can silently enable RLS with zero
 - Requires `SUPABASE_PROD_DB_URL` secret in GitHub → Settings → Secrets and variables → Actions. Value is the PostgreSQL URI from Supabase Connect modal (session pooler, URI type): `postgresql://postgres.[project-ref]:[PASSWORD]@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres`
 - Backup files are committed to `backups/` on `main` as `backup_YYYY-MM-DD_HH-MM-SS.sql`.
 
+### Monthly Dev Database Refresh
+`scripts/refresh-dev-from-prod.sh` replaces all app data in the dev Supabase project with the newest nightly prod backup, in a single transaction. Dev's `auth.users`/`profiles` are never touched, so dev logins survive.
+
+**Full runbook — read before touching this: `DEV-DB-REFRESH.md`.** Two things that will otherwise cost you an afternoon: the dashboard SQL Editor silently truncates pastes at ~9,500 characters (use `psql`, never the editor), and dev is in **ap-southeast-1** while prod's backup URI above is **ap-southeast-2**.
+
 ### Tax Invoice PDF (`printInvoice`)
 Generated via `window.open()` + `document.write()` — a new browser window, not an iframe or download.
 
