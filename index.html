@@ -3475,7 +3475,6 @@ function renderReports(){
     h('div',{style:{width:'44px',height:'44px',background:'var(--color-gold-50,#fffbeb)',borderRadius:'12px',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'16px',color:'var(--color-gold-600,#d97706)'},htmlContent:I.dollar}),
     h('h3',{style:{fontFamily:'var(--font-serif)',fontSize:'17px',fontWeight:'600',color:'var(--color-foreground)',marginBottom:'8px'}},'Tax Invoices'),
     h('p',{style:{fontSize:'13px',color:'var(--color-muted-foreground)',lineHeight:'1.5'}},'Nationwide Jewellers tax invoices. View, filter and reprint by sub-customer and date.'),
-    h('p',{style:{fontSize:'12px',color:'var(--color-muted-foreground)',marginTop:'12px'}},(S.taxInvoices||[]).length+' invoice'+((S.taxInvoices||[]).length!==1?'s':'')+' recorded'),
   );
   tiCard.append(tiBody);grid.append(tiCard);
 
@@ -4004,7 +4003,20 @@ function printPackingSlip(packets,retailerId,subCust,shipDate,shippingCost,psNum
   const shipping=parseFloat(shippingCost)||0;
   const grandTotal=packetsTotal+shipping;
   const dateStr=new Date().toLocaleDateString('en-NZ',{day:'numeric',month:'long',year:'numeric'});
-  const rowsHtml=rows.map(r=>`<tr><td>${r.ref}</td><td>${r.surname||''} (${r.itemCount})</td><td style="text-align:right">${fmtMoney(r.amount)}</td></tr>`).join('');
+  // Same treatment as printInvoice(): one header row per work packet (ref/surname, no
+  // qty/price/amount), then one row per item (Item + Job Type in Description, qty always 1).
+  // Built from `packets`/S.allPacketItems directly, not `rows` -- rows's own per-packet
+  // aggregate (packetsTotal/grandTotal above) is untouched, so the footer totals are unaffected.
+  const rowsHtml=packets.map(p=>{
+    const items=S.allPacketItems.filter(i=>i.packet_id===p.id);
+    const headerRow=`<tr><td>${p.customer_ref} — ${p.surname||''}</td><td></td><td></td><td></td></tr>`;
+    const itemRows=items.map(i=>{
+      const cost=(parseFloat(i.cost)||0)*discountMult;
+      const desc=(i.item||'')+' — '+jobTypeName(i.job_type_id);
+      return `<tr><td style="padding-left:20px;">${desc}</td><td>1</td><td>${fmtMoney(cost)}</td><td>${fmtMoney(cost)}</td></tr>`;
+    }).join('');
+    return headerRow+itemRows;
+  }).join('');
   const retDisplay=(retailer?.name||'')+(subCust?' — '+subCust:'');
   const win=window.open('','_blank','width=800,height=600');
   win.document.write(`<!DOCTYPE html><html><head><title>Packing Slip${psNumber?' '+psNumber:''}</title>
@@ -4016,8 +4028,9 @@ h1{font-size:22px;margin:0;}
 .meta{font-size:13px;color:#555;margin-bottom:24px;line-height:1.8;}
 table{width:100%;border-collapse:collapse;margin-top:8px;font-size:13px;}
 th{text-align:left;border-bottom:2px solid #111;padding:6px 4px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;}
+th:nth-child(2),th:nth-child(3),th:nth-child(4){text-align:right;}
 td{padding:6px 4px;border-bottom:1px solid #ddd;}
-td:last-child{text-align:right;}
+td:nth-child(2),td:nth-child(3),td:nth-child(4){text-align:right;}
 .subtotal td{padding-top:10px;border-bottom:none;}
 .shipping td{border-bottom:1px solid #ddd;}
 .grand-total td{font-weight:700;border-top:2px solid #111;border-bottom:none;padding-top:8px;}
@@ -4030,12 +4043,12 @@ td:last-child{text-align:right;}
 <strong>Packets:</strong> ${packets.length}
 </div>
 <table>
-<thead><tr><th>Reference</th><th>Customer</th><th style="text-align:right">Amount</th></tr></thead>
+<thead><tr><th>Description</th><th>Quantity</th><th>Unit price</th><th>Amount</th></tr></thead>
 <tbody>${rowsHtml}</tbody>
 <tfoot>
-<tr class="subtotal"><td colspan="2">Appraisals</td><td style="text-align:right">${fmtMoney(packetsTotal)}</td></tr>
-<tr class="shipping"><td colspan="2">Shipping</td><td style="text-align:right">${fmtMoney(shipping)}</td></tr>
-<tr class="grand-total"><td colspan="2">Total</td><td style="text-align:right">${fmtMoney(grandTotal)}</td></tr>
+<tr class="subtotal"><td colspan="3">Appraisals</td><td>${fmtMoney(packetsTotal)}</td></tr>
+<tr class="shipping"><td colspan="3">Shipping</td><td>${fmtMoney(shipping)}</td></tr>
+<tr class="grand-total"><td colspan="3">Total</td><td>${fmtMoney(grandTotal)}</td></tr>
 </tfoot>
 </table>
 <script>window.onload=function(){window.focus();window.print();};<\/script>
@@ -4072,7 +4085,22 @@ function printInvoice(packets,retailerId,subCust,invoiceNum,shipDate,shippingCos
   const amountDue=subtotal+gst;
   const fmtN=n=>n.toLocaleString('en-NZ',{minimumFractionDigits:2,maximumFractionDigits:2});
   const issuedStr=new Date(shipDate+'T00:00:00').toLocaleDateString('en-NZ',{day:'numeric',month:'long',year:'numeric'});
-  const rowsHtml=rows.map(r=>`<tr><td>${r.ref} — ${r.surname||''} (${r.itemCount} item${r.itemCount!==1?'s':''})</td><td>1</td><td style="text-align:right">${fmtN(r.amount)}</td><td style="text-align:right">${fmtN(r.amount)}</td></tr>`).join('');
+  // Per Nationwide's request: sub-customers need the per-item cost to pass on to their own
+  // customers, not just a packet total -- one header row per work packet (ref/surname, no
+  // qty/price/amount) followed by one row per item (Item + Job Type in Description, qty always
+  // 1). Deliberately built from `packets`/S.allPacketItems directly rather than from `rows` --
+  // `rows`'s own per-packet aggregate (valuationsTotal, subtotal/GST/total below) is untouched by
+  // this, so the invoice footer's totals still come from the exact same numbers as before.
+  const rowsHtml=packets.map(p=>{
+    const items=S.allPacketItems.filter(i=>i.packet_id===p.id);
+    const headerRow=`<tr><td>${p.customer_ref} — ${p.surname||''}</td><td></td><td></td><td></td></tr>`;
+    const itemRows=items.map(i=>{
+      const cost=parseFloat(i.cost)||0;
+      const desc=(i.item||'')+' — '+jobTypeName(i.job_type_id);
+      return `<tr><td style="padding-left:20px;">${desc}</td><td>1</td><td>${fmtN(cost)}</td><td>${fmtN(cost)}</td></tr>`;
+    }).join('');
+    return headerRow+itemRows;
+  }).join('');
   const shippingRow=shippingStored>0?`<tr><td>Shipping</td><td>1</td><td style="text-align:right">${fmtN(shippingExGST)}</td><td style="text-align:right">${fmtN(shippingExGST)}</td></tr>`:'';
   const win=window.open('','_blank','width=800,height=900');
   win.document.write(`<!DOCTYPE html><html><head><title>Tax Invoice ${invoiceNum||''}</title>
@@ -4149,12 +4177,13 @@ function openShipmentModal(filteredPackets){
   const discountMult=1-((retailer?.discount_pct)||0)/100;
 
   let shipDate=todayISO();
-  let shipCost='6';
+  let shipCost='10';
   let trackLast4='';
   let saving=false;
   let step=1;
   let invoiceNum=null;
   let psNumber=null;
+  let runId=null; // set once the draft shipment is persisted, at first Print click
 
   const fmt=fmtMoney;
 
@@ -4166,7 +4195,35 @@ function openShipmentModal(filteredPackets){
     });
   }
 
-  function doPrintPackingSlip(){if(!psNumber)psNumber=nextPackingSlipNumber();printPackingSlip(selectedPackets,firstPacket.retailer_id,subCust,shipDate,shipCost,psNumber);}
+  // Persists the draft shipment (shipping_runs + tax_invoices for NJ) the first time Print is
+  // clicked -- reserves the real invoice/packing-slip number and links packets immediately, so
+  // an abandoned print (customer already has the invoice, "Mark as Shipped" never happened) is
+  // recoverable later via Admin -> Draft Shipments instead of leaving no record at all.
+  // Persisting only tax_invoices wouldn't be enough -- which packets were on it lives in
+  // packets.shipping_run_id, and without that link a draft can't be finalised later. A second
+  // Print click (cost edited, went Back and printed again) updates the existing draft's cost
+  // instead of creating a new row -- runId being already set is what distinguishes the two.
+  async function ensureDraftPersisted(){
+    const cost=parseFloat(shipCost);
+    if(!runId){
+      runId=gid();
+      const runData={id:runId,ship_date:todayISO(),shipping_cost:cost,shipping_cost_billed:isNJ?njBilledShippingCost(cost):cost,tracking_last4:null,retailer_id:firstPacket.retailer_id,sub_customer_name:subCust||null,sub_customer_id:subCustId||null,status:'draft',created:todayISO()};
+      if(isNJ){invoiceNum=invoiceNum||nextInvoiceNumber();runData.invoice_number=invoiceNum;}
+      else{psNumber=psNumber||nextPackingSlipNumber();runData.packing_slip_number=psNumber;}
+      await sbInsert('shipping_runs',runData);
+      for(const p of selectedPackets){await sbUpdate('packets',p.id,{shipping_run_id:runId});}
+      if(isNJ){
+        await sbInsert('tax_invoices',{id:gid(),invoice_number:invoiceNum,shipping_run_id:runId,issue_date:todayISO(),retailer_id:firstPacket.retailer_id,sub_customer_name:subCust||null,sub_customer_id:subCustId||null,status:'draft',created:todayISO()});
+      }
+      S.packets=await sbAll('packets','&order=created.desc')||S.packets;
+    }else{
+      await sbUpdate('shipping_runs',runId,{shipping_cost:cost,shipping_cost_billed:isNJ?njBilledShippingCost(cost):cost});
+    }
+    try{S.shippingRuns=await sbAll('shipping_runs','&order=created.desc')||S.shippingRuns;}catch(e2){console.warn(e2);}
+    if(isNJ)try{S.taxInvoices=await sbAll('tax_invoices','&order=created.desc')||S.taxInvoices;}catch(e2){console.warn(e2);}
+  }
+
+  function doPrintPackingSlip(){printPackingSlip(selectedPackets,firstPacket.retailer_id,subCust,shipDate,shipCost,psNumber);}
   function doPrintInvoice(){printInvoice(selectedPackets,firstPacket.retailer_id,subCust,invoiceNum,shipDate,njBilledShippingCost(shipCost),subCustId);}
 
   function closeModal(){
@@ -4276,6 +4333,9 @@ function openShipmentModal(filteredPackets){
 
       modal.append(body);
 
+      const errEl=h('div',{style:{color:'var(--color-destructive)',fontSize:'var(--text-sm)',padding:'0 var(--space-5)',minHeight:'var(--space-4)'}});
+      modal.append(errEl);
+
       const foot=h('div',{className:'modal-footer'});
       const cancelBtn=document.createElement('button');
       cancelBtn.className='btn btn-secondary';
@@ -4284,8 +4344,19 @@ function openShipmentModal(filteredPackets){
       const printBtn=document.createElement('button');
       printBtn.className='btn btn-primary';
       printBtn.textContent=isNJ?'Print Invoice':'Print Packing Slip';
-      printBtn.addEventListener('click',()=>{
-        if(isNJ){if(!invoiceNum)invoiceNum=nextInvoiceNumber();try{doPrintInvoice();}catch(e){console.warn('Print failed:',e);}}
+      printBtn.addEventListener('click',async()=>{
+        errEl.textContent='';
+        const cost=parseFloat(shipCost);
+        if(isNaN(cost)||cost<0){errEl.textContent='Enter a valid shipping cost.';return;}
+        printBtn.disabled=true;cancelBtn.disabled=true;printBtn.textContent='Preparing...';
+        try{
+          await ensureDraftPersisted();
+        }catch(e){
+          errEl.textContent='Error saving draft: '+e.message;
+          printBtn.disabled=false;cancelBtn.disabled=false;printBtn.textContent=isNJ?'Print Invoice':'Print Packing Slip';
+          return;
+        }
+        if(isNJ){try{doPrintInvoice();}catch(e){console.warn('Print failed:',e);}}
         else{try{doPrintPackingSlip();}catch(e){console.warn('Print failed:',e);}}
         step=2;buildModal();
       });
@@ -4336,24 +4407,22 @@ function openShipmentModal(filteredPackets){
         if(!trackLast4||trackLast4.length<4){errEl.textContent='Enter the last 4 digits of the tracking number.';return;}
         const cost=parseFloat(shipCost);
         if(isNaN(cost)||cost<0){errEl.textContent='Enter a valid shipping cost.';return;}
+        if(!runId){errEl.textContent='Something went wrong -- go back and print again before marking as shipped.';return;}
         saving=true;shipBtn.textContent='Saving...';shipBtn.disabled=true;backBtn.disabled=true;
         try{
-          const runId=gid();
-          // shipping_cost stays the raw fulfilment-partner charge (what we owe them, for their
-          // payment report). shipping_cost_billed is the frozen, GST-inclusive, marked-up figure
-          // actually invoiced to Nationwide -- see njBilledShippingCost().
-          const runData={id:runId,ship_date:shipDate,shipping_cost:cost,shipping_cost_billed:isNJ?njBilledShippingCost(cost):cost,tracking_last4:trackLast4,retailer_id:firstPacket.retailer_id,sub_customer_name:subCust||null,sub_customer_id:subCustId||null,created:todayISO()};
-          if(isNJ&&invoiceNum)runData.invoice_number=invoiceNum;
-          if(!isNJ&&psNumber)runData.packing_slip_number=psNumber;
-          await sbInsert('shipping_runs',runData);
-          if(isNJ&&invoiceNum){
-            try{await sbInsert('tax_invoices',{id:gid(),invoice_number:invoiceNum,shipping_run_id:runId,issue_date:shipDate,retailer_id:firstPacket.retailer_id,sub_customer_name:subCust||null,sub_customer_id:subCustId||null,status:'active',created:todayISO()});}
-            catch(e2){console.warn('tax_invoices insert failed:',e2);}
+          // The draft row (and its tax invoice, for NJ) was already created when Print was
+          // clicked, with the real invoice/packing-slip number reserved -- this just fills in
+          // what wasn't known yet (real ship date, tracking) and flips it to active. Never
+          // touches tax_invoices.issue_date -- that's fixed at whenever the invoice was actually
+          // handed over (print time), not when shipping was later confirmed.
+          await sbUpdate('shipping_runs',runId,{ship_date:shipDate,tracking_last4:trackLast4,shipping_cost:cost,shipping_cost_billed:isNJ?njBilledShippingCost(cost):cost,status:'active'});
+          if(isNJ){
+            const ti=S.taxInvoices.find(t=>t.shipping_run_id===runId);
+            if(ti)await sbUpdate('tax_invoices',ti.id,{status:'active'});
           }
-          for(const p of selectedPackets){await sbUpdate('packets',p.id,{shipping_run_id:runId});}
           S.packets=await sbAll('packets','&order=created.desc')||S.packets;
           try{S.shippingRuns=await sbAll('shipping_runs','&order=created.desc')||S.shippingRuns;}catch(e2){console.warn(e2);}
-          try{S.taxInvoices=await sbAll('tax_invoices','&order=created.desc')||S.taxInvoices;}catch(e2){console.warn(e2);}
+          if(isNJ)try{S.taxInvoices=await sbAll('tax_invoices','&order=created.desc')||S.taxInvoices;}catch(e2){console.warn(e2);}
           S.shippingSelected=new Set();
           closeModal();
           showToast('Shipment recorded');
@@ -4669,6 +4738,263 @@ function showVoidNJPaymentConfirm(paymentId){
   document.body.append(overlay);
 }
 
+// Fills in what wasn't known at print time (real ship date, tracking) and flips a draft
+// shipment to active -- same completion the normal "Mark as Shipped" step does, just reachable
+// for a draft the fulfilment partner never came back to confirm. isNJRun is inferred from
+// invoice_number rather than passed in, since that's the same signal the rest of the codebase
+// uses to distinguish NJ runs from Direct packing slips.
+async function completeDraftShipment(runId,shipDate,trackingLast4,shippingCost){
+  const run=S.shippingRuns.find(r=>r.id===runId);
+  if(!run||run.status!=='draft')return;
+  const isNJRun=!!run.invoice_number;
+  const billed=isNJRun?njBilledShippingCost(shippingCost):shippingCost;
+  await sbUpdate('shipping_runs',runId,{ship_date:shipDate,tracking_last4:trackingLast4,shipping_cost:shippingCost,shipping_cost_billed:billed,status:'active'});
+  if(isNJRun){
+    const ti=S.taxInvoices.find(t=>t.shipping_run_id===runId);
+    if(ti)await sbUpdate('tax_invoices',ti.id,{status:'active'});
+  }
+  await loadAll();
+}
+
+// A draft that's genuinely abandoned (never actually sent) -- unlike voidNJStatement/Payment,
+// this hard-deletes rather than voids, since a draft never represented a real completed
+// business event, just a reservation. Releases packets first, then tax_invoices, then
+// shipping_runs -- FK order. The number is simply never reused (a gap, same as any other
+// abandoned draft).
+async function deleteDraftShipment(runId){
+  const run=S.shippingRuns.find(r=>r.id===runId);
+  if(!run||run.status!=='draft')return;
+  const pkts=S.packets.filter(p=>p.shipping_run_id===runId);
+  for(const p of pkts){await sbUpdate('packets',p.id,{shipping_run_id:null});}
+  const ti=S.taxInvoices.find(t=>t.shipping_run_id===runId);
+  if(ti)await sbDelete('tax_invoices',ti.id);
+  await sbDelete('shipping_runs',runId);
+  await loadAll();
+}
+
+function showCompleteDraftModal(runId){
+  const run=S.shippingRuns.find(r=>r.id===runId);
+  if(!run)return;
+  const pkts=S.packets.filter(p=>p.shipping_run_id===runId);
+  const overlay=h('div',{className:'modal-overlay',style:{alignItems:'center'},onClick:e=>{if(e.target===overlay)overlay.remove();}});
+  const modal=h('div',{className:'modal',style:{maxWidth:'480px'}});
+  const hdr=h('div',{className:'modal-header',style:{borderBottom:'none'}});
+  hdr.append(h('h1',{className:'modal-title'},'Complete Draft Shipment'));
+  modal.append(hdr);
+  const body=h('div',{className:'modal-body'});
+  body.append(h('p',{style:{fontSize:'var(--text-sm)',color:'var(--color-muted-foreground)',marginBottom:'var(--space-3)'}},(run.invoice_number||run.packing_slip_number||'')+' — '+pkts.length+' packet'+(pkts.length!==1?'s':'')));
+
+  const dateInput=h('input',{className:'input',type:'date'});
+  dateInput.value=todayISO();
+  const trackInput=h('input',{className:'input',type:'text',placeholder:'0000',inputMode:'numeric'});
+  trackInput.setAttribute('maxlength','4');
+  trackInput.addEventListener('input',e=>{trackInput.value=e.target.value.replace(/\D/g,'').slice(0,4);});
+  const costInput=h('input',{className:'input',type:'number',step:'0.01'});
+  costInput.value=run.shipping_cost;
+
+  body.append(fld('Ship Date',dateInput,{marginBottom:'var(--space-3)'}));
+  body.append(fld('Tracking (last 4)',trackInput,{marginBottom:'var(--space-3)'}));
+  body.append(fld('Shipping Cost ($)',costInput,{marginBottom:'var(--space-2)'}));
+  body.append(h('p',{style:{fontSize:'var(--text-xs)',color:'var(--color-muted-foreground)'}},'Defaults to what was entered at print time — correct it if the fulfilment partner\'s actual charge differs.'));
+  modal.append(body);
+
+  const errEl=h('div',{style:{color:'var(--color-destructive)',fontSize:'var(--text-sm)',padding:'0 var(--space-5)',minHeight:'var(--space-4)'}});
+  modal.append(errEl);
+
+  const foot=h('div',{className:'modal-footer',style:{borderTop:'none'}});
+  const cancelBtn=h('button',{className:'btn btn-secondary',onClick:()=>overlay.remove()},'Cancel');
+  const confirmBtn=h('button',{className:'btn btn-primary',onClick:async()=>{
+    errEl.textContent='';
+    if(!dateInput.value){errEl.textContent='Date is required.';return;}
+    if(!trackInput.value||trackInput.value.length<4){errEl.textContent='Enter the last 4 digits of the tracking number.';return;}
+    const cost=parseFloat(costInput.value);
+    if(isNaN(cost)||cost<0){errEl.textContent='Enter a valid shipping cost.';return;}
+    confirmBtn.disabled=true;confirmBtn.textContent='Saving...';
+    try{
+      await completeDraftShipment(runId,dateInput.value,trackInput.value,cost);
+      overlay.remove();showToast('Shipment completed');render();
+    }catch(e){errEl.textContent='Error: '+e.message;confirmBtn.disabled=false;confirmBtn.textContent='Complete';}
+  }},'Complete');
+  foot.append(cancelBtn,confirmBtn);
+  modal.append(foot);
+  overlay.append(modal);
+  document.body.append(overlay);
+}
+
+function showDeleteDraftConfirm(runId){
+  const run=S.shippingRuns.find(r=>r.id===runId);
+  if(!run)return;
+  const pkts=S.packets.filter(p=>p.shipping_run_id===runId);
+  const overlay=h('div',{className:'modal-overlay',style:{alignItems:'center'},onClick:e=>{if(e.target===overlay)overlay.remove();}});
+  const modal=h('div',{className:'modal',style:{maxWidth:'440px'}});
+  const hdr=h('div',{className:'modal-header',style:{borderBottom:'none'}});
+  hdr.append(h('h1',{className:'modal-title'},'Delete Draft Shipment'));
+  modal.append(hdr);
+  const body=h('div',{className:'modal-body'});
+  body.append(h('p',{style:{color:'var(--color-muted-foreground)',lineHeight:'var(--leading-relaxed)'}},
+    'This will release '+pkts.length+' packet'+(pkts.length!==1?'s':'')+' back to unshipped and permanently remove this draft ('+(run.invoice_number||run.packing_slip_number||'')+'). The number will not be reused. Only do this if it was never actually sent — if the customer already has this invoice, use Complete instead.'));
+  modal.append(body);
+  const foot=h('div',{className:'modal-footer',style:{borderTop:'none'}});
+  const cancelBtn=h('button',{className:'btn btn-secondary',onClick:()=>overlay.remove()},'Cancel');
+  const deleteBtn=h('button',{className:'btn btn-destructive',onClick:async()=>{
+    deleteBtn.disabled=true;deleteBtn.textContent='Deleting...';
+    try{await deleteDraftShipment(runId);overlay.remove();showToast('Draft deleted');render();}
+    catch(e){showToast('Error: '+e.message,true);deleteBtn.disabled=false;deleteBtn.textContent='Delete';}
+  }},'Delete');
+  foot.append(cancelBtn,deleteBtn);
+  modal.append(foot);
+  overlay.append(modal);
+  document.body.append(overlay);
+}
+
+function draftShipmentsCard(){
+  const card=h('div',{style:{background:'var(--color-card)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'var(--space-6)',marginBottom:'var(--space-5)'}});
+  card.append(h('h2',{style:{fontSize:'var(--text-lg)',fontWeight:'var(--font-semibold)',margin:'0 0 var(--space-2)'}},'Draft Shipments'));
+  card.append(h('p',{style:{fontSize:'var(--text-sm)',color:'var(--color-muted-foreground)',margin:'0 0 var(--space-4)'}},'Printed but never marked as shipped — the customer may already have this invoice or slip. Complete it with the real ship date and tracking once you know them, or delete it if it was never actually sent.'));
+  const drafts=(S.shippingRuns||[]).filter(r=>r.status==='draft').sort((a,b)=>(a.created||'').localeCompare(b.created||''));
+  if(!drafts.length){
+    card.append(h('p',{style:{fontSize:'var(--text-sm)',color:'var(--color-muted-foreground)'}},'No draft shipments.'));
+    return card;
+  }
+  const tbl=h('table',{className:'table'});
+  tbl.append(h('thead',{},h('tr',{},
+    h('th',{className:'table-header'},'Printed'),
+    h('th',{className:'table-header'},'Number'),
+    h('th',{className:'table-header'},'Retailer'),
+    h('th',{className:'table-header',style:{textAlign:'right'}},'Packets'),
+    h('th',{className:'table-header',style:{textAlign:'right'}},'Shipping ($)'),
+    h('th',{className:'table-header'},''),
+  )));
+  const tb=h('tbody',{});
+  drafts.forEach(run=>{
+    const pkts=S.packets.filter(p=>p.shipping_run_id===run.id);
+    const scLabel=run.sub_customer_id?scName(run.sub_customer_id):(run.sub_customer_name||'');
+    const retLabel=retailerName(run.retailer_id)+(scLabel?' — '+scLabel:'');
+    tb.append(h('tr',{},
+      h('td',{},fmtDFromISO(run.created)),
+      h('td',{},run.invoice_number||run.packing_slip_number||''),
+      h('td',{},retLabel),
+      h('td',{style:{textAlign:'right'}},String(pkts.length)),
+      h('td',{style:{textAlign:'right',fontFamily:'var(--font-mono)'}},fmtMoney(parseFloat(run.shipping_cost)||0)),
+      h('td',{style:{display:'flex',gap:'var(--space-2)',justifyContent:'flex-end'}},
+        h('button',{className:'btn btn-sm btn-secondary',onClick:()=>showCompleteDraftModal(run.id)},'Complete'),
+        h('button',{className:'btn btn-sm btn-destructive',onClick:()=>showDeleteDraftConfirm(run.id)},'Delete'),
+      ),
+    ));
+  });
+  tbl.append(tb);
+  card.append(h('div',{style:{overflowX:'auto'}},tbl));
+  return card;
+}
+
+// Undoes a real completed shipment -- the raw-SQL fix from incident 1 (a shipment marked
+// shipped with the wrong split), now available in-app. Voids rather than hard-deletes (unlike
+// deleteDraftShipment) because this represents a real business event that already happened --
+// the tax invoice may be in the retailer's hands, so the row (and its number) must stay as an
+// audit trail, just flagged void. Refuses rather than guessing, matching voidNJStatement's
+// style, whenever something downstream already depends on this shipment being real: on an NJ
+// statement, already paid, or any linked packet already billed (NJ's gabby_billed lock is
+// CLAUDE.md rule 23 -- this never clears it, only refuses when it's set).
+async function voidCompletedShipment(runId){
+  const run=S.shippingRuns.find(r=>r.id===runId);
+  if(!run||run.status!=='active')return;
+  const ti=S.taxInvoices.find(t=>t.shipping_run_id===runId);
+  if(ti){
+    if(ti.nj_statement_id)throw new Error('This invoice is on an NJ statement — void the statement in Admin first.');
+    if(ti.paid_date)throw new Error('This invoice has already been paid — void the payment in Admin first.');
+  }
+  const pkts=S.packets.filter(p=>p.shipping_run_id===runId);
+  if(pkts.some(p=>p.gabby_billed||p.paula_billed))throw new Error('One or more packets on this shipment have already been billed — unbill them first.');
+  for(const p of pkts){await sbUpdate('packets',p.id,{shipping_run_id:null});}
+  if(ti)await sbUpdate('tax_invoices',ti.id,{status:'void'});
+  await sbUpdate('shipping_runs',runId,{status:'void'});
+  await loadAll();
+}
+
+function showVoidCompletedShipmentConfirm(runId){
+  const run=S.shippingRuns.find(r=>r.id===runId);
+  if(!run)return;
+  const pkts=S.packets.filter(p=>p.shipping_run_id===runId);
+  const overlay=h('div',{className:'modal-overlay',style:{alignItems:'center'},onClick:e=>{if(e.target===overlay)overlay.remove();}});
+  const modal=h('div',{className:'modal',style:{maxWidth:'460px'}});
+  const hdr=h('div',{className:'modal-header',style:{borderBottom:'none'}});
+  hdr.append(h('h1',{className:'modal-title'},'Void Completed Shipment'));
+  modal.append(hdr);
+  const body=h('div',{className:'modal-body'});
+  body.append(h('p',{style:{color:'var(--color-muted-foreground)',lineHeight:'var(--leading-relaxed)'}},
+    'This will release '+pkts.length+' packet'+(pkts.length!==1?'s':'')+' back to unshipped'+(run.invoice_number?' and void tax invoice '+run.invoice_number:'')+'. Only do this to correct a genuine mistake — the packets will need to be reshipped from scratch.'));
+  modal.append(body);
+  const errEl=h('div',{style:{color:'var(--color-destructive)',fontSize:'var(--text-sm)',padding:'0 var(--space-5)',minHeight:'var(--space-4)'}});
+  modal.append(errEl);
+  const foot=h('div',{className:'modal-footer',style:{borderTop:'none'}});
+  const cancelBtn=h('button',{className:'btn btn-secondary',onClick:()=>overlay.remove()},'Cancel');
+  const voidBtn=h('button',{className:'btn btn-destructive',onClick:async()=>{
+    errEl.textContent='';
+    voidBtn.disabled=true;voidBtn.textContent='Voiding...';
+    try{await voidCompletedShipment(runId);overlay.remove();showToast('Shipment voided');render();}
+    catch(e){errEl.textContent=e.message;voidBtn.disabled=false;voidBtn.textContent='Void';}
+  }},'Void');
+  foot.append(cancelBtn,voidBtn);
+  modal.append(foot);
+  overlay.append(modal);
+  document.body.append(overlay);
+}
+
+// Lookup rather than a full listing -- completed shipments accumulate indefinitely, unlike the
+// small, self-clearing Draft Shipments list, so this is search-first: find the one shipment
+// that needs correcting by its number or a packet reference on it, rather than scrolling all of
+// them. Matches only status==='active' runs (draft belongs in draftShipmentsCard, void ones are
+// already undone).
+function completedShipmentLookupCard(){
+  const card=h('div',{style:{background:'var(--color-card)',border:'1px solid var(--color-border)',borderRadius:'var(--radius-lg)',padding:'var(--space-6)',marginBottom:'var(--space-5)'}});
+  card.append(h('h2',{style:{fontSize:'var(--text-lg)',fontWeight:'var(--font-semibold)',margin:'0 0 var(--space-2)'}},'Void a Completed Shipment'));
+  card.append(h('p',{style:{fontSize:'var(--text-sm)',color:'var(--color-muted-foreground)',margin:'0 0 var(--space-4)'}},'Find a shipment by its invoice/packing-slip number or a packet reference to undo a genuine mistake — releases the packets back to unshipped and voids the tax invoice, if any.'));
+  const input=h('input',{className:'input',placeholder:'INV-0001, PS-0001, or packet ref'});
+  card.append(h('div',{style:{marginBottom:'var(--space-4)'}},input));
+  const resultsWrap=h('div',{});
+  card.append(resultsWrap);
+
+  function runResults(q){
+    resultsWrap.innerHTML='';
+    const ql=(q||'').trim().toLowerCase();
+    if(!ql)return;
+    const matchingRunIds=new Set(S.packets.filter(p=>p.shipping_run_id&&(p.customer_ref||'').toLowerCase().includes(ql)).map(p=>p.shipping_run_id));
+    const matches=(S.shippingRuns||[]).filter(r=>r.status==='active'&&(
+      (r.invoice_number||'').toLowerCase().includes(ql)||
+      (r.packing_slip_number||'').toLowerCase().includes(ql)||
+      matchingRunIds.has(r.id)
+    )).slice(0,10);
+    if(!matches.length){
+      resultsWrap.append(h('p',{style:{fontSize:'var(--text-sm)',color:'var(--color-muted-foreground)'}},'No matching completed shipment.'));
+      return;
+    }
+    const tbl=h('table',{className:'table'});
+    tbl.append(h('thead',{},h('tr',{},
+      h('th',{className:'table-header'},'Ship Date'),
+      h('th',{className:'table-header'},'Number'),
+      h('th',{className:'table-header'},'Retailer'),
+      h('th',{className:'table-header',style:{textAlign:'right'}},'Packets'),
+      h('th',{className:'table-header'},''),
+    )));
+    const tb=h('tbody',{});
+    matches.forEach(run=>{
+      const pkts=S.packets.filter(p=>p.shipping_run_id===run.id);
+      const scLabel=run.sub_customer_id?scName(run.sub_customer_id):(run.sub_customer_name||'');
+      tb.append(h('tr',{},
+        h('td',{},fmtDFromISO(run.ship_date)),
+        h('td',{},run.invoice_number||run.packing_slip_number||''),
+        h('td',{},retailerName(run.retailer_id)+(scLabel?' — '+scLabel:'')),
+        h('td',{style:{textAlign:'right'}},String(pkts.length)),
+        h('td',{},h('button',{className:'btn btn-sm btn-destructive',onClick:()=>showVoidCompletedShipmentConfirm(run.id)},'Void')),
+      ));
+    });
+    tbl.append(tb);
+    resultsWrap.append(h('div',{style:{overflowX:'auto'}},tbl));
+  }
+  input.addEventListener('input',e=>runResults(e.target.value));
+  return card;
+}
+
 function renderAdmin(){
   const c=h('div',{});
   c.append(h('div',{className:'page-header'},h('h1',{className:'h1'},'Admin')));
@@ -4683,8 +5009,9 @@ function renderAdmin(){
     return card;
   }
 
-  c.append(wip('Shipping Runs Admin','View, edit, and delete shipping runs. Add or remove individual packets from a run. Deleting a run clears shipping_run_id on all linked packets and removes the run record.'));
-  c.append(wip('Tax Invoice Admin','Void tax invoices, reissue with corrected packet sets, and manage INV-XXXX records. Operates on tax_invoices table; shipping run record is not duplicated here. Access will be restricted to admin users only.'));
+  c.append(draftShipmentsCard());
+  c.append(completedShipmentLookupCard());
+  c.append(wip('Tax Invoice Admin — Reissue','Reissue a voided tax invoice with a corrected packet set under a new INV-XXXX number. Voiding is now handled by "Void a Completed Shipment" above; this covers only the reissue-with-corrections step. Access will be restricted to admin users only.'));
   c.append(njReconciliationCard());
   c.append(njPaymentsCard());
   return c;
@@ -4765,6 +5092,7 @@ function renderTaxInvoices(){
     h('th',{className:'table-header'},'Sub-customer'),
     h('th',{className:'table-header',style:{textAlign:'right'}},'Packets'),
     h('th',{className:'table-header',style:{textAlign:'right'}},'Amount (inc. GST)'),
+    h('th',{className:'table-header'},'Status'),
     h('th',{className:'table-header'},''),
   )));
   const tbody=h('tbody',{});
@@ -4773,17 +5101,25 @@ function renderTaxInvoices(){
   invoices.forEach(inv=>{
     const run=S.shippingRuns.find(r=>r.id===inv.shipping_run_id);
     const runPackets=S.packets.filter(p=>p.shipping_run_id===inv.shipping_run_id);
+    const isDraft=inv.status==='draft';
+    const isVoid=inv.status==='void';
     // Full invoice amount, no discount -- same math as the actual Tax Invoice PDF (printInvoice()),
     // matching CLAUDE.md rule 19. Previously hand-rolled its own calc that wrongly applied the
     // retailer's discount_pct to the valuation total, under-reporting every NJ invoice by ~8.5%.
     const total=njTaxInvoiceAmount(inv).total;
-    grandTotal+=total;
+    if(!isDraft&&!isVoid)grandTotal+=total;
 
-    const reprintBtn=h('button',{className:'btn-link',style:{fontSize:'var(--text-xs)'}},'Reprint');
-    reprintBtn.addEventListener('click',()=>{
-      try{printInvoice(runPackets,run?.retailer_id||0,scName(inv.sub_customer_id),inv.invoice_number,inv.issue_date,run?(run.shipping_cost_billed??run.shipping_cost):0,inv.sub_customer_id);}
-      catch(e){console.warn(e);}
-    });
+    // Neither a draft (not finished yet) nor a voided invoice (undone) has anything real left to
+    // reprint -- just a status label instead, so it's still visible here rather than hidden.
+    let actionCell=h('td',{});
+    if(!isDraft&&!isVoid){
+      const reprintBtn=h('button',{className:'btn-link',style:{fontSize:'var(--text-xs)'}},'Reprint');
+      reprintBtn.addEventListener('click',()=>{
+        try{printInvoice(runPackets,run?.retailer_id||0,scName(inv.sub_customer_id),inv.invoice_number,inv.issue_date,run?(run.shipping_cost_billed??run.shipping_cost):0,inv.sub_customer_id);}
+        catch(e){console.warn(e);}
+      });
+      actionCell=h('td',{},reprintBtn);
+    }
 
     tbody.append(h('tr',{},
       h('td',{style:{fontFamily:'var(--font-mono)'}},inv.invoice_number||''),
@@ -4791,13 +5127,15 @@ function renderTaxInvoices(){
       h('td',{},scName(inv.sub_customer_id)),
       h('td',{style:{textAlign:'right'}},String(runPackets.length)),
       h('td',{style:{textAlign:'right'}},fmtMoney(total)),
-      h('td',{},reprintBtn),
+      h('td',{},(isDraft||isVoid)?h('span',{style:{fontSize:'var(--text-xs)',fontWeight:'var(--font-medium)',color:'var(--color-muted-foreground)'}},isDraft?'Draft':'Voided'):''),
+      actionCell,
     ));
   });
 
   tbody.append(h('tr',{style:{fontWeight:'var(--font-semibold)',borderTop:'2px solid var(--color-border)'}},
     h('td',{colspan:'4',style:{fontWeight:'var(--font-semibold)'}},'Total ('+invoices.length+' invoice'+(invoices.length!==1?'s':'')+')'),
     h('td',{style:{textAlign:'right',fontWeight:'var(--font-semibold)'}},fmtMoney(grandTotal)),
+    h('td',{}),
     h('td',{}),
   ));
 
@@ -5625,7 +5963,7 @@ function renderShippingReport(){
     const shipping=parseFloat(isNJRun?(run.shipping_cost_billed??run.shipping_cost):run.shipping_cost)||0;
     const appraisals=runPackets.reduce((s,p)=>{const items=itemsByPacketId.get(p.id)||[];return s+items.reduce((is,i)=>is+(parseFloat(i.cost)||0),0);},0);
     const cost=(appraisals+shipping/1.15)*(1+auditGstRate);
-    totalCost+=cost;
+    if(run.status!=='draft'&&run.status!=='void')totalCost+=cost;
 
     // Build packet detail rows (hidden by default)
     const detailRows=runPackets.map(p=>{
@@ -5651,13 +5989,21 @@ function renderShippingReport(){
       chevron.style.transform=open?'rotate(90deg)':'';
       detailRows.forEach(dr=>{dr.style.display=open?'':'none';});
     });
-    const reprintBtn=h('button',{className:'btn-link',style:{fontSize:'var(--text-xs)',whiteSpace:'nowrap'}},isNJRun?'Reprint Invoice':'Reprint Slip');
-    reprintBtn.addEventListener('click',e=>{
-      e.stopPropagation();
-      const runPkts=S.packets.filter(p=>p.shipping_run_id===run.id);
-      if(isNJRun){try{printInvoice(runPkts,run.retailer_id,scName(run.sub_customer_id),run.invoice_number,run.ship_date,run.shipping_cost_billed??run.shipping_cost,run.sub_customer_id);}catch(err){console.warn(err);}}
-      else{try{printPackingSlip(runPkts,run.retailer_id,scName(run.sub_customer_id),run.ship_date,run.shipping_cost,run.packing_slip_number||null);}catch(err){console.warn(err);}}
-    });
+    // A draft has no finished document to reprint yet, and a voided run has nothing real left to
+    // reprint either -- status label instead of the link, same treatment as renderTaxInvoices().
+    let actionCell;
+    if(run.status==='draft'||run.status==='void'){
+      actionCell=h('td',{},h('span',{style:{fontSize:'var(--text-xs)',fontWeight:'var(--font-medium)',color:'var(--color-muted-foreground)'}},run.status==='draft'?'Draft':'Voided'));
+    }else{
+      const reprintBtn=h('button',{className:'btn-link',style:{fontSize:'var(--text-xs)',whiteSpace:'nowrap'}},isNJRun?'Reprint Invoice':'Reprint Slip');
+      reprintBtn.addEventListener('click',e=>{
+        e.stopPropagation();
+        const runPkts=S.packets.filter(p=>p.shipping_run_id===run.id);
+        if(isNJRun){try{printInvoice(runPkts,run.retailer_id,scName(run.sub_customer_id),run.invoice_number,run.ship_date,run.shipping_cost_billed??run.shipping_cost,run.sub_customer_id);}catch(err){console.warn(err);}}
+        else{try{printPackingSlip(runPkts,run.retailer_id,scName(run.sub_customer_id),run.ship_date,run.shipping_cost,run.packing_slip_number||null);}catch(err){console.warn(err);}}
+      });
+      actionCell=h('td',{},reprintBtn);
+    }
     const docRef=run.invoice_number||run.packing_slip_number||'';
     summaryRow.append(
       h('td',{},chevron),
@@ -5667,7 +6013,7 @@ function renderShippingReport(){
       h('td',{},run.tracking_last4?'…'+run.tracking_last4:''),
       h('td',{style:{textAlign:'right'}},String(runPackets.length)),
       h('td',{style:{textAlign:'right'}},fmtMoney(cost)),
-      h('td',{},reprintBtn),
+      actionCell,
     );
     tbody.append(summaryRow,...detailRows);
   });
