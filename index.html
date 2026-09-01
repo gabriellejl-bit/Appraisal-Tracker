@@ -2515,7 +2515,7 @@ td:last-child{text-align:right;}
 .aging-table{width:280px;margin-left:auto;margin-top:16px;}
 .aging-table td{border-bottom:none;padding:4px 6px;}
 .page-footer{display:flex;justify-content:space-between;margin-top:40px;font-size:11px;color:#555;}
-@page{margin:0;}@media print{body{padding:20mm;}}
+@page{margin:20mm;}@media print{body{padding:0;}}
 </style></head><body>
 <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:32px;">
   <h1 style="font-size:28px;font-weight:700;margin:0;letter-spacing:-0.5px;">STATEMENT</h1>
@@ -2556,12 +2556,10 @@ ${summaryRowsHtml}
 <tfoot><tr class="total-row"><td><strong>Balance due</strong></td><td><strong>$${fmtSigned(balanceDue)}</strong></td></tr></tfoot>
 </table>
 </div>
-<!-- padding-top (not margin-top) deliberately: margin on the first box of a fresh printed page
-     can collapse away in Chrome's print engine (confirmed live -- a margin-top here rendered as
-     no gap at all when this block landed on page 2). Padding on an atomic page-break-inside:avoid
-     block doesn't collapse and isn't shared with body's own top padding, so it can't affect page
-     1's own margin -- it only ever adds space directly above Payment Details itself. -->
-<div style="page-break-inside:avoid;padding-top:20mm;">
+<!-- No manual top padding here -- @page{margin:20mm} above now guarantees a consistent gap on
+     every printed page, including when this block happens to start a fresh one. A padding-top
+     hack was used here before that fix; kept now would double up to 40mm in that case. -->
+<div style="page-break-inside:avoid;">
 <div style="margin-top:32px;padding-top:12px;border-top:1px solid #ddd;font-size:12px;">
   <div style="font-weight:700;margin-bottom:4px;">Payment Details</div>
   <div>Account Name: ${PGL_BANK_ACCOUNT_NAME}</div>
