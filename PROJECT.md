@@ -147,9 +147,11 @@ Legacy column `sub_customer TEXT` still exists but is not read by app code — u
 `cost` is stored **ex-GST**. Never divide by 1.15. Use raw cost on customer invoices — do NOT apply `discount_pct`.
 
 ### shipping_runs
-`id TEXT PK, ship_date TEXT, shipping_cost DECIMAL (GST-INCLUSIVE), shipping_cost_billed DECIMAL (GST-INCLUSIVE, nullable), tracking_last4 TEXT, retailer_id FK, sub_customer_id FK→sub_customers.id (nullable), sub_customer_name TEXT (nullable, legacy), invoice_number TEXT (nullable, INV-XXXX, NJ only), packing_slip_number TEXT (nullable, PS-XXXX, Direct only), created TEXT`
+`id TEXT PK, ship_date TEXT, shipping_cost DECIMAL (GST-INCLUSIVE), shipping_cost_billed DECIMAL (GST-INCLUSIVE, nullable), tracking_last4 TEXT, retailer_id FK, sub_customer_id FK→sub_customers.id (nullable), sub_customer_name TEXT (nullable, legacy), invoice_number TEXT (nullable, INV-XXXX, NJ only), packing_slip_number TEXT (nullable, PS-XXXX, Direct only), status TEXT ('draft'|'active'|'void', default 'active', CHECK-constrained), created TEXT`
 
-**CRITICAL — shipping_cost is stored GST-inclusive.** Divide by 1.15 for ex-GST display. Default input value is $6. `getShippingForBilling()` pre-computes `totalExGST` and `bySubCustomerExGST`.
+`status`: `draft` from Print until Mark-as-Shipped/Complete, `active` once genuinely shipped, `void` if undone via Admin. See "Shipping workflow" above and CLAUDE.md rule 25 for the full lifecycle.
+
+**CRITICAL — shipping_cost is stored GST-inclusive.** Divide by 1.15 for ex-GST display. Default input value is $10. `getShippingForBilling()` pre-computes `totalExGST` and `bySubCustomerExGST`.
 
 **`shipping_cost` vs `shipping_cost_billed`:** Nationwide's 8.5% commission is taken off everything on the statement, including shipping, so invoicing them the same amount PGL pays the fulfilment partner loses money on every shipment. `shipping_cost` stays the raw, untouched fulfilment-partner charge — what PGL actually owes them, used for the Fulfilment Summary report. `shipping_cost_billed` is a separate, frozen, GST-inclusive figure computed once at shipment-creation time via `njBilledShippingCost()` (`shipping_cost × 1.10` for NJ runs only, rounded to cents; equals `shipping_cost` for non-NJ runs) — this is what actually goes on the tax invoice/statement. Every invoicing/statement code path reads `run.shipping_cost_billed??run.shipping_cost` (the `??` fallback covers runs shipped before this column existed) — never recompute the markup downstream. 10% was chosen deliberately over the exact breakeven rate (8.5%/(1-8.5%)≈9.29%) as a rounder, less obvious number.
 
@@ -233,7 +235,7 @@ Three real-world documents, only the second is built in this app:
 
 **Known pre-existing bug this sidesteps, not fixed:** `renderBillingStep4()` and the manual per-packet billing toggle both auto-flip `status_id` to Billed when the *other* user has 0% on every item in a packet — correct for standard retailers, wrong for NJ (Gabby always owes Nationwide the full invoice regardless of her %). If Paula bills a 100%-Paula NJ packet first via the old wizard, `status_id` can show "Billed" in Records/Dashboard before Gabby has actually put it on a statement. The Statement flow's selection logic above is immune to this, but the on-screen label can still mislead. Interim workaround: bill Gabby first where practical.
 
-**Admin** (`renderAdmin()`, alongside the still-stubbed Shipping Runs Admin / Tax Invoice Admin): two separate cards.
+**Admin** (`renderAdmin()`, alongside Draft Shipments / Void a Completed Shipment / the still-stubbed Tax Invoice Admin — Reissue — see Admin Section above): two more cards specific to NJ.
 - **NJ Statements** (`njReconciliationCard()`) — lists finalized statements with their frozen opening balance/total. Void only; Mark as Paid no longer lives here (or anywhere on a per-statement basis).
 - **NJ Payments** (`njPaymentsCard()`) — lists recorded payments (date, reference, amount, linked credit note, status), "Record Payment" button opens `showRecordNJPaymentModal()` (amount/date/reference + a checklist of every currently-unpaid invoice, live credit-note preview), per-row Void via `showVoidNJPaymentConfirm()`.
 
@@ -242,18 +244,19 @@ Three real-world documents, only the second is built in this app:
 **Still open:** Nationwide's Bill-To address on the printed Statement is the AU head-office address from their supplier procedure doc (flagged inline with a code comment) — not yet confirmed correct for NZ-issued statements. The discount-leak in `buildInvoiceSummary()` (discount applied before splitting by `paula_pct`/`gabrielle_pct`, so Paula's NJ share is under-calculated by 8.5%) is also still unfixed — see rule 21 in `CLAUDE.md`. Credit note lines print their date range as the reference (`'Credit note — Payment '+date`) instead of a real credit note number — standard invoicing practice expects a proper number the same way tax invoices get `INV-XXXX`; `nj_credit_notes` has no numbering scheme yet. **Prod status:** shipped 2026-07-15 (commit `a0bc296`) — prod has all 4 NJ tables and the associated `tax_invoices`/`shipping_runs` columns, currently empty (no real statements run through prod yet). Known gap: prod is missing 6 FKs that dev has (`nj_credit_notes_nj_statement_id_fkey`, `nj_statement_lines_credit_note_id_fkey`, `nj_statement_lines_statement_id_fkey`, `nj_statement_lines_tax_invoice_id_fkey`, `tax_invoices_nj_statement_id_fkey`, `packets_shipping_run_id_fkey`) — dev's schema is correct here, prod's migration script just omitted them; fix is additive FKs on prod, not removing them from dev.
 
 **Business rule — one invoice/slip per packet:**
-A packet can never appear on more than one invoice or packing slip. The database enforces this structurally (`packets.shipping_run_id` is a single FK), and the shipping view enforces it in the UI by only showing packets where `shipping_run_id IS NULL`. If a packet needs to move to a different run (e.g. error correction), it must first be removed from the existing run (voiding or editing the invoice/slip) before it can be re-shipped. The UI for this is a future todo — see "Invoice edit / void screen" in Planned Features.
+A packet can never appear on more than one invoice or packing slip. The database enforces this structurally (`packets.shipping_run_id` is a single FK), and the shipping view enforces it in the UI by only showing packets where `shipping_run_id IS NULL`. If a packet needs to move to a different run (e.g. error correction), it must first be released from the existing run — voiding the whole shipment (Admin → Void a Completed Shipment, or Delete for a still-draft one) before it can be re-shipped. Reissuing a corrected replacement invoice under a new number after a void is still a future todo — see Admin section below.
 
-**Shipping workflow:**
-- Packets for NJ and Direct are shipped in batches. Each batch creates a `shipping_run` record and sets `shipping_run_id` on each packet.
-- NJ shipments generate a tax invoice (`INV-XXXX`) printed at ship time. Invoice number stored in `shipping_runs.invoice_number`.
+**Shipping workflow — draft-at-print, active-at-confirm:**
+- Print (Step 1 of `openShipmentModal()`) persists the shipment immediately: `shipping_runs` (`status:'draft'`) and, for NJ, `tax_invoices` (`status:'draft'`) are created together, the real `INV-XXXX`/`PS-XXXX` number is reserved, and every selected packet's `shipping_run_id` is set — which is also what makes the packet leave the Shipping list right away, not at confirmation. This exists so a printed-but-abandoned invoice (the customer may already have it, but "Mark as Shipped" never happened) still has a record behind it — previously that scenario left nothing in the database at all.
+- Mark as Shipped (Step 2) **updates** that same row — real ship date, tracking, `status:'active'` — never inserts a second one. `tax_invoices.issue_date` is fixed at print/draft time and never touched again; it's when the document was actually handed over, not when shipping was confirmed.
+- An abandoned draft is recovered via Admin → Draft Shipments (Complete or Delete — see Admin section below), not from the Shipping page itself.
 - `getShippingForBilling(retailerId)` — matches runs by retailer + billing filter date range (NOT by selected packet IDs, since Direct packets may not appear in a user's billing selection even when shipped).
-- `nextInvoiceNumber()` — scans `S.taxInvoices`, finds max `INV-XXXX`, returns next padded string.
+- `nextInvoiceNumber()`/`nextPackingSlipNumber()` — scan `S.taxInvoices`/`S.shippingRuns`, find max `INV-XXXX`/`PS-XXXX`, return next padded string. Called once at print/draft time, not at Mark-as-Shipped — a draft reserves its number immediately, so gaps from abandoned/deleted drafts are normal, expected behaviour, not a bug.
 
-**Tax invoices (NJ sub-customers):**
-- Title: "TAX INVOICE". To: sub-customer name + address (from `sub_customers` table). From: PGL Appraisals, 34 Tarbert Street, Alexandra 9320.
-- Line items: per-packet row (ref — surname — item count). Shipping shown ex-GST (stored amount ÷ 1.15). GST 15% on full subtotal. Amount due NZD.
-- No due date (billed via Nationwide).
+**Tax invoices (NJ sub-customers) and packing slips (Direct) — itemized line detail:**
+- Tax invoice title: "TAX INVOICE". To: sub-customer name + address (from `sub_customers` table). From: PGL Appraisals, 34 Tarbert Street, Alexandra 9320. Packing slip: title "Packing Slip", To: retailer/sub-customer.
+- Both use the same 4-column table (Description / Quantity / Unit price / Amount): one header row per work packet (`ref — surname`, blank Qty/Unit price/Amount) followed by one row per item on it (`Item — Job Type` in Description, Qty 1, Unit price/Amount = that item's cost) — added per Nationwide's request so a sub-customer can see and pass on the actual per-item charge, not just a packet total. The Subtotal/GST/Total footer still sums from the same per-packet aggregate as before this change (untouched), so totals are unaffected by the more detailed row rendering.
+- Tax invoice only: shipping shown ex-GST (stored amount ÷ 1.15), GST 15% on full subtotal, amount due NZD, no due date (billed via Nationwide).
 
 **Invoice Groupings (billing PDFs):**
 Job types mapped to three billing categories (`INVOICE_GROUPS` constant):
@@ -321,14 +324,14 @@ Billing run history. Regenerate PDFs. Delete run.
 Filter: date range + retailer. Groups by retailer, lists items per customer. Download PDF.
 
 ### Tax Invoices
-Filter: sub-customer + date range. Flat list of NJ tax invoices (invoice #, date, sub-customer, packet count, GST-inclusive amount via `njTaxInvoiceAmount()`) with a Reprint action per row.
+Filter: sub-customer + date range. Flat list of NJ tax invoices (invoice #, date, sub-customer, packet count, GST-inclusive amount via `njTaxInvoiceAmount()`). Status column shows "Draft"/"Voided" for non-active rows in place of the Reprint action (there's nothing final to reprint yet, or any more); both are also excluded from the grand total at the bottom.
 
 ### Shipping
 - Filter: retailer/sub-customer. Lists unshipped packets with checkboxes.
-- "Create Shipment" CTA → two-step modal: (1) packet table + shipping cost → Print Invoice (NJ) or Print Packing Slip, (2) ship date + tracking → Mark as Shipped.
+- "Create Shipment" CTA → two-step modal: (1) packet table + shipping cost → Print Invoice (NJ) or Print Packing Slip, (2) ship date + tracking → Mark as Shipped. A packet leaves this list at step 1 (Print), not step 2 — see "Shipping workflow" above. An abandoned draft is recovered via Admin → Draft Shipments, not from this page.
 
 ### Shipping Audit
-Expandable per-run rows. Columns: Date, Retailer/Sub-customer, Invoice, Tracking, Packets, Cost. Shows `INV-XXXX` for NJ runs.
+Expandable per-run rows. Columns: Date, Retailer/Sub-customer, Invoice, Tracking, Packets, Cost. Shows `INV-XXXX` for NJ runs. Same Draft/Voided label treatment as the Tax Invoices report above — replaces the Reprint action for non-active runs, and both are excluded from the total. `filterShippingRuns()` (shared with Fulfilment Summary) has no status filter of its own — each report built on it needs its own guard.
 
 ### Fulfilment Summary
 Flat list of all shipping runs with packet counts and costs.
@@ -364,7 +367,8 @@ For the fulfilment partner to invoice against (`renderJamiesShippingReport()`). 
 - `getBillingItems()`, `isRetailerCombined(retailerId)`, `invoiceGroup(jtName)`
 - `buildInvoiceSummary(items, retailerId)` — returns `{byJobType, bySubCustomer, subtotal, gst, total, discountPct, isNJRetailer, isCombined, isCombinedGabby, isCombinedPaula}`
 - `getShippingForBilling(retailerId)` — returns `{total, totalExGST, bySubCustomer, bySubCustomerExGST, bySubCustomerRunCount, runs, runCount, dateLabel}`
-- `nextInvoiceNumber()` — returns next `INV-XXXX` string
+- `nextInvoiceNumber()`/`nextPackingSlipNumber()` — return next `INV-XXXX`/`PS-XXXX` string
+- `completeDraftShipment(runId,shipDate,trackingLast4,shippingCost)`, `deleteDraftShipment(runId)`, `voidCompletedShipment(runId)` — see "Shipping workflow" / Admin Section above and CLAUDE.md rule 25
 - `generatePDFContent(retailerId)` — text lines for detailed billing PDF
 - `retailerName(id)`, `statusName(id)`, `fmtMoney(n)`, `fmtD(d)`, `getDateRange(key)`
 - `njRetailer()`, `njTaxInvoiceAmount(ti)`, `njCurrentBalance(asOfDateISO)`, `njNextOpenMonth()`, `njLinePool()`, `njStatementPeriodLabel(st)`, `saveNJDraft()`, `finalizeNJStatement()`, `recordNJPayment(amount,receivedDate,reference,invoiceIds)`, `voidNJPayment(id)`, `voidNJStatement(id)`, `printStatement(id)` — see "Nationwide Jewellers — Statement" above
@@ -389,17 +393,14 @@ A restricted-access admin area for complex operations not safe to expose in the 
 
 **NJ Statement Reconciliation — built, two cards.** "NJ Statements" lists finalized statements with Void only (reverses billing, releases everything, refuses rather than guessing if the statement's credit note has already been used downstream). "NJ Payments" lists recorded payments with a "Record Payment" action (tick any unpaid invoice, enter amount, credit note auto-calculated as the difference) and per-row Void. See "Nationwide Jewellers — Statement" above for full detail.
 
-**Shipping Runs Admin:**
-- View all shipping runs with full detail
-- Add or remove individual packets from a run (sets/clears `packets.shipping_run_id`)
-- Delete a shipping run — clears `shipping_run_id` on all linked packets, removes the run record, and removes any linked `tax_invoices` entry
-- Business rule: a packet can never appear on more than one run; UI must enforce this when adding to a run
+**Draft Shipments** (`draftShipmentsCard()`) — lists shipments printed but never marked as shipped (`shipping_runs.status='draft'`). **Complete** (`completeDraftShipment()`) fills in the real ship date/tracking, with shipping cost re-editable (it defaults to what was entered at print time, but the fulfilment partner's actual charge may differ) and flips to active — same invoice/packing-slip number reserved at print time throughout. **Delete** (`deleteDraftShipment()`) hard-deletes the draft and releases its packets — safe since a draft never represented a real completed shipment, unlike a void.
 
-**Tax Invoice Admin:**
-- Void a tax invoice (`tax_invoices.status = 'void'`) — does not delete shipping run
-- Reissue: create a new `tax_invoices` record with a new INV number linked to the same or corrected shipping run
-- Does not duplicate shipping run functionality — shipping run edits done via Shipping Runs Admin
-- Future: restrict to admin user only (Gabby) — auth now exists, but the Admin view itself is not yet gated by it
+**Void a Completed Shipment** (`completedShipmentLookupCard()`/`voidCompletedShipment()`) — search-first (by invoice/packing-slip number or a packet ref), not a full listing, since real shipments accumulate indefinitely unlike the small, self-clearing Draft Shipments list. Voids (never hard-deletes) the `shipping_runs` row and its `tax_invoices` row if NJ, releasing the packets back to unshipped — the in-app replacement for the raw-SQL fix a wrong-split shipment used to require. Refuses rather than guessing (matching `voidNJStatement()`'s style) when the invoice is on an NJ statement, already paid, or any linked packet is already billed (`gabby_billed`/`paula_billed` — see CLAUDE.md rule 23).
+
+**Tax Invoice Admin — Reissue (not yet built):**
+- Voiding is now handled by Void a Completed Shipment above (voids the whole shipment, including its tax invoice) — this card's original void plan is superseded
+- Still open: reissuing a corrected replacement under a new INV number after a void. Data model already supports it (a fresh `tax_invoices` row can point at the same or a corrected `shipping_run_id`) — just not wired up in the UI yet
+- Future: restrict Admin to admin user only (Gabby) — auth now exists, but the Admin view itself is not yet gated by it
 
 ## Planned Features
 - Admin dashboard for non-appraiser logins — accounts with no `appraiser_id` mapping currently default to Gabby's view; the G/P avatar toggle may be replaced by something else once this exists
@@ -407,8 +408,9 @@ A restricted-access admin area for complex operations not safe to expose in the 
 - CSV matching Solo accounting import
 - Records page: shipped/unshipped filter (deferred — spacing constraints)
 - Sub-customer address entry UI (currently populated directly in Supabase)
-- **Invoice edit / void screen** — this is about individual `tax_invoices` (INV-XXXX), distinct from the statement-level void that's now built. View a specific invoice's packets, remove items (sets `packets.shipping_run_id = null`), void (`tax_invoices.status = 'void'`), and reissue with a new INV number. Data model already supports this. Required to enforce the one-invoice-per-packet rule when correcting a shipping/invoicing error (as opposed to a whole-statement error, which Void in Admin now handles).
-- **Invoice search** — Search by INV number, sub-customer, date, amount.
+- ~~Invoice void screen~~ — done, via Admin → Void a Completed Shipment (see Admin Section above). **Still open: Reissue** — creating a corrected replacement invoice under a new INV number after a void; data model supports it, UI doesn't exist yet.
+- ~~Invoice search~~ — done, via Admin → Void a Completed Shipment's lookup (search by INV/PS number or packet ref) for finding a specific shipment, and the existing Tax Invoices report filters for browsing by sub-customer/date.
+- ~~Draft shipments / abandoned-print recovery~~ — done (2026-09-01): printing now persists a draft shipment (and tax invoice, for NJ) immediately, reserving the real number, instead of writing nothing until Mark as Shipped. See "Shipping workflow" above, CLAUDE.md rule 25, and Admin → Draft Shipments.
 - ~~NJ billing reconciliation~~ — done, via NJ Statement History + Admin (see "Nationwide Jewellers — Statement" above).
 - **Alexandra / Queenstown billing review** — Manual test pass: verify Step 2 modal and PDF generation are correct under the unified billing model (no shipping, unaffected by tax_invoices change).
 - **Voiding an already-Paid NJ statement whose credit note is already used elsewhere** — `voidNJStatement()` currently refuses this case outright rather than unwinding it automatically; needs a real design before it's more than a safe refusal.
